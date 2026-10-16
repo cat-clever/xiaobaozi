@@ -153,11 +153,26 @@ dependencies {
     //   Tab 栏的排版 / 动画 / 手势仍旧留在 RN，这里只换"玻璃怎么画"。
     //   见 `glass/kyant/KyantGlass.kt`。
     //
-    //   ★ 它会顺带把 `org.jetbrains.compose.*`（Android 侧重定向到
-    //     `androidx.compose.*`）和 `io.github.kyant0:shapes` 拉进来，
-    //     所以这里不用再单独声明 Compose 依赖。
     //   ★ 它的 AAR 要求 `compileSdk >= 37`，见根 `build.gradle` 的说明。
     implementation("io.github.kyant0:backdrop:2.0.1")
+
+    // ★★ Compose 必须**自己声明**，别指望 backdrop 带过来。
+    //
+    //   它是 KMP 库：Compose 依赖写在 `implementation` 里，于是**只进运行期变体**
+    //   （`androidRuntimeElements`）；编译期那个变体（`androidApiElements`）
+    //   只声明了 `kotlin-stdlib`。结果就是 `androidx.compose.*` 一个都解析不到，
+    //   编译期报一屏 `Unresolved reference 'compose'`（CI 上实测踩到，见
+    //   commit 之后那次失败的 run）。
+    //
+    //   版本对齐库自己用的那套：Compose Multiplatform **1.12.0**
+    //   （`org.jetbrains.compose.ui:ui:1.12.0` 的 android 变体就是重定向到
+    //   `androidx.compose.ui:ui:1.12.0`，两边同号）。
+    //
+    //   `ui` 带 `ui-graphics` / `ui-unit` / `ui-text`，`foundation` 给
+    //   `Box` / `fillMaxSize` / `RoundedCornerShape` —— 我们只用到这些。
+    implementation("androidx.compose.ui:ui:1.12.0")
+    implementation("androidx.compose.foundation:foundation:1.12.0")
+    implementation("androidx.compose.runtime:runtime:1.12.0")
 
     // ★ 端内升级要把下载好的 APK 交给系统安装器，必须走 FileProvider
     //   （Android 7 起 file:// 会抛 FileUriExposedException），
