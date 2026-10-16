@@ -627,7 +627,7 @@ function AppShell(): React.JSX.Element {
                       ★ 按住的"扩张"分两层：外层整条 1.04（`tabScale`，仅非真玻璃），
                         这一颗胶囊 1.16 / 1.05（`capsuleScale*`，两端都有）——
                         于是胶囊顶出去的那一截会**越过 tab 条的上下边**。 */}
-                  {tabRects.length === TABS.length ? (
+                  {!realGlass && tabRects.length === TABS.length ? (
                     <Animated.View
                       pointerEvents="none"
                       style={[
