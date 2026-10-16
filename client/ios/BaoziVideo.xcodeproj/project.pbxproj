@@ -325,7 +325,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 20;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = BaoziVideo/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
@@ -333,7 +333,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.2.15;
+				MARKETING_VERSION = 0.2.16;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -355,14 +355,14 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
-				CURRENT_PROJECT_VERSION = 19;
+				CURRENT_PROJECT_VERSION = 20;
 				INFOPLIST_FILE = BaoziVideo/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.2.15;
+				MARKETING_VERSION = 0.2.16;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",

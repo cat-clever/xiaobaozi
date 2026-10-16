@@ -98,6 +98,10 @@ class GlassView(context: Context) : View(context) {
   private val scrimPaint = Paint(Paint.ANTI_ALIAS_FLAG)
   private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG)
   private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+  /** 顶边高光之下那层**柔和镜面反射**：白渐变，让玻璃"亮起来" */
+  private val sheenPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+  /** 底部**内侧阴影**：让玻璃有厚度，不是一张薄贴片 */
+  private val innerShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
   private val rect = RectF()
 
   init {
@@ -144,21 +148,41 @@ class GlassView(context: Context) : View(context) {
     //     theme 里 Android 之所以更实（0.66 / 0.75），理由正是"Android 没有
     //     背景模糊"。现在有了，就该用更透的那档，否则糊了也白糊。
     //     （改 `theme/index.ts` 的 `bar` 时记得同步这里。）
+    // 浅色里压一点（158 -> 132）：用户报"几乎白色"，就是白釉压不住，
+    // 把糊过的**海报颜色**再放出来一点。
     scrimPaint.color =
-      if (light) Color.argb(158, 255, 255, 255) else Color.argb(133, 16, 16, 22)
+      if (light) Color.argb(132, 255, 255, 255) else Color.argb(133, 16, 16, 22)
 
     // 上亮下暗的"厚度" + 上缘高光。值跟以前一样 —— 这层是**垫在衬底之上**的
     // 那点提亮，跟有没有真模糊无关。
-    val top = if (light) Color.argb(226, 255, 255, 255) else Color.argb(52, 255, 255, 255)
-    val bottom = if (light) Color.argb(126, 255, 255, 255) else Color.argb(24, 255, 255, 255)
+    // 浅色的上亮下白再压一点（226 -> 180, 126 -> 90）……
+    val top = if (light) Color.argb(180, 255, 255, 255) else Color.argb(52, 255, 255, 255)
+    val bottom = if (light) Color.argb(90, 255, 255, 255) else Color.argb(24, 255, 255, 255)
     fillPaint.shader = LinearGradient(0f, 0f, 0f, height, top, bottom, Shader.TileMode.CLAMP)
 
+    // ★ 顶边柔和**镜面反射**：真玻璃顶边的蓝/白渐变，
+    //   只扫表面的前 22%
+    sheenPaint.shader = LinearGradient(
+      0f, 0f, 0f, height * 0.22f,
+      if (light) Color.argb(40, 255, 255, 255) else Color.argb(26, 255, 255, 255),
+      Color.argb(0, 255, 255, 255),
+      Shader.TileMode.CLAMP,
+    )
+
+    // ★ 底部**内侧柔和阴影**：玻璃有厚度，不是薄贴片
+    innerShadowPaint.shader = LinearGradient(
+      0f, height * 0.72f, 0f, height,
+      Color.argb(0, 0, 0, 0),
+      if (light) Color.argb(46, 0, 0, 0) else Color.argb(70, 0, 0, 0),
+      Shader.TileMode.CLAMP,
+    )
+
     highlightPaint.color =
-      if (light) Color.argb(235, 255, 255, 255) else Color.argb(118, 255, 255, 255)
+      if (light) Color.argb(190, 255, 255, 255) else Color.argb(118, 255, 255, 255)
 
     borderPaint.style = Paint.Style.STROKE
     borderPaint.strokeWidth = dp(0.5f)
-    borderPaint.color = if (light) Color.argb(200, 255, 255, 255) else Color.argb(92, 255, 255, 255)
+    borderPaint.color = if (light) Color.argb(170, 255, 255, 255) else Color.argb(92, 255, 255, 255)
 
     rebuildMesh()
   }
@@ -187,8 +211,8 @@ class GlassView(context: Context) : View(context) {
     val r = min(cornerRadius, min(w, h) / 2f)
     val halfW = w / 2f
     val halfH = h / 2f
-    val band = min(halfH, dp(9f))
-    val strength = dp(3.2f)
+    val band = min(halfH, dp(11f))
+    val strength = dp(4.0f)
     val eps = 0.5f
 
     var i = 0
@@ -486,6 +510,8 @@ class GlassView(context: Context) : View(context) {
         // 衬底（补被抓走的那层透光底）+ 上亮下暗的色调
         canvas.drawRoundRect(rect, radius, radius, scrimPaint)
         canvas.drawRoundRect(rect, radius, radius, fillPaint)
+        canvas.drawRoundRect(rect, radius, radius, sheenPaint)
+        canvas.drawRoundRect(rect, radius, radius, innerShadowPaint)
         painted = true
       } catch (_: Throwable) {
         // ★ 真玻璃这条路上任何一步炸了，就地**永久**退回渐变近似 ——
@@ -502,6 +528,8 @@ class GlassView(context: Context) : View(context) {
       // ★ 兜底：抓不到背景（或抓炸了）时，回到原来那套"渐变 + 高光"的近似。
       //   观感差一档，但绝对不会白屏 / 花屏。
       canvas.drawRoundRect(rect, radius, radius, fillPaint)
+      canvas.drawRoundRect(rect, radius, radius, sheenPaint)
+      canvas.drawRoundRect(rect, radius, radius, innerShadowPaint)
     }
 
     // 上缘高光：一条贴着顶边的白线，两端让开圆角

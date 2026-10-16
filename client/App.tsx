@@ -52,6 +52,16 @@ const TABS: Array<{ id: Tab; label: string }> = [
 /** 悬浮 Tab 栏离底边的距离 —— 不贴底，抬上来一点 */
 const TAB_BAR_BOTTOM = space.xl;
 
+/**
+ * ★ 选中胶囊**在 tab 条里本来就探出多少**（dp）。
+ *
+ *   真·液态玻璃按下去那下，是"**整条先鼓一点，那颗胶囊鼓得更狠、探出整条之外**"。
+ *   探出这件事得有地方探：`styles.tabBar` 的 `overflow` 必须是 `visible`，
+ *   否则 Android 会把越界的子节点裁掉（`clipChildren`），
+ *   下面的 `-TAB_CAPSULE_LIFT` 会被无声吃掉。
+ */
+const TAB_CAPSULE_LIFT = 3;
+
 type Route = { name: 'tabs' } | { name: 'settings' };
 
 /**
@@ -141,13 +151,26 @@ function AppShell(): React.JSX.Element {
   /**
    * ★ 按住 Tab 时胶囊的"回弹"。
    *
-   *   真·液态玻璃的 `isInteractive` 只在**触摸打在玻璃自己身上**时才动，
-   *   而 Tab 按钮垫在玻璃上面、命中优先级更高 —— 按在按钮上时玻璃收不到触摸，
-   *   那块空白处才有反应。这一层 JS 弹簧把按钮上那段补上：
-   *   手指按住哪个 Tab，整条胶囊就轻弹一下，松开回弹。
-   *   两个反馈不打架：一个管胶囊空白处，一个管按钮上。
+   *   ★★ 两个值、两层扩张（2026-10-16 用户给的判据）：
+   *     **「整条扩张，然后胶囊扩张的要超过整条」**
+   *
+   *     · `tabPress` → 桌面那条 **tab 条**整体放大一点（1 → 1.04）
+   *     · `capsulePress` → **选中胶囊**放大得更多（纵向 1 → 1.16），
+   *       且**慢半拍**（`delay`）—— 观感是"条先鼓起、胶囊再顶出来"，
+   *       顶出来的那一截正好越过 tab 条的上下边（见 `TAB_CAPSULE_LIFT`）
+   *
+   *   ★ 弹簧**故意用不同参数**：条那条快而硬（跟手），胶囊那条慢而弹
+   *     （"液体"那点黏滞感）。两个都关掉 native driver 会踩坑，
+   *     所以：条用 native（纯 transform），胶囊留着 JS driver ——
+   *     同一个视图上不能混，这里正好是两个视图。
+   *
+   *   真·液态玻璃（iOS 26）那侧，**整条**的系统原生扩张照旧由
+   *   `UIGlassEffect.isInteractive` 负责；胶囊这一层是我们自己补的，
+   *   两者叠起来才是"条 + 胶囊"两层都动。
    */
   const tabPress = useRef(new Animated.Value(0)).current;
+  /** 胶囊那一层（慢半拍、幅度更大） */
+  const capsulePress = useRef(new Animated.Value(0)).current;
 
   const setTabHeld = useCallback(
     (held: boolean) => {
@@ -157,13 +180,34 @@ function AppShell(): React.JSX.Element {
         speed: 40,
         bounciness: 14,
       }).start();
+      Animated.spring(capsulePress, {
+        toValue: held ? 1 : 0,
+        // ★ 这条挂着 `capsuleL`（拖拽要 `setValue`，只能 JS driver），
+        //   所以它也只能 JS driver —— 同一个视图上两者不能混
+        useNativeDriver: false,
+        speed: 26,
+        bounciness: 18,
+        delay: held ? 70 : 0,
+      }).start();
     },
-    [tabPress],
+    [tabPress, capsulePress],
   );
 
+  /** 整条：鼓一点就够（再大就成"整体缩放"了，不像玻璃） */
   const tabScale = tabPress.interpolate({
     inputRange: [0, 1],
-    outputRange: [1, 1.035],
+    outputRange: [1, 1.04],
+  });
+
+  /** 胶囊：**比整条大得多**，顶出去的那一截越过 tab 条的上下边 */
+  const capsuleScaleY = capsulePress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.16],
+  });
+  /** 横向也扩一点，"扩张"不该只有纵向 */
+  const capsuleScaleX = capsulePress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.05],
   });
 
   /**
@@ -203,9 +247,16 @@ function AppShell(): React.JSX.Element {
   const [tabRects, setTabRects] = useState<Array<{ x: number; width: number }>>(
     [],
   );
-  const capsuleX = useRef(new Animated.Value(0)).current;
-  /** 胶囊当前该在哪 —— 拖拽要从这个值算起 */
+  const capsuleL = useRef(new Animated.Value(0)).current;
+  /**
+   * 胶囊的**宽度** —— 单独一条值才做得动"流淌"那一下：
+   * 切换时先把宽度抻长（补齐两格之间的距离），位置挪过去再收回来。
+   * ★ 只给宽度一条值不够，左右两条边要能**分别**动，见 `settleCapsule`。
+   */
+  const capsuleW = useRef(new Animated.Value(0)).current;
+  /** 胶囊左边缘当前该在哪 —— 拖拽要从这个值算起 */
   const capsuleTarget = useRef(0);
+  const capsuleInit = useRef(false);
 
   const handleTabLayout = useCallback((index: number, e: LayoutChangeEvent) => {
     const { x, width: w } = e.nativeEvent.layout;
@@ -252,23 +303,90 @@ function AppShell(): React.JSX.Element {
     [tabRects, goToTab],
   );
 
-  /** 把胶囊弹到某个下标的位置 */
+  /**
+   * 把胶囊挪到某个下标的位置。
+   *
+   * ★★ 切换时那下"**流体般的变形**"就在这里：不是硬邦邦平移过去，
+   *   而是**先抻长、再收回**：
+   *     ① 宽度涨到「目标格宽 + 两格之间的距离」→ 胶囊一头先伸过去
+   *     ② 位置滑到目标格（左边缘领先、宽度慢半拍）→ 中间被拉成一条"桥"
+   *     ③ 宽度收回目标格宽 → 交代清楚，落成一颗规整的胶囊
+   *   ①② 同时起跑、刚度不同（那条桥就出来了），③ 在 ① 结束时接上。
+   *
+   * ★ 做饭的是 `capsuleL`（位置）+ `capsuleW`（宽度）。拖拽过程中
+   *   `syncTo` 直接 `setValue` 写 `capsuleL`（`setValue` 会掐掉正在跑的动画），
+   *   所以跟手不会被这条路径干扰。
+   */
   const settleCapsule = useCallback(
     (index: number, animated = true) => {
       const rect = tabRects[index];
       if (!rect) return;
+      const fromX = capsuleTarget.current;
       capsuleTarget.current = rect.x;
-      // ★ JS 驱动：拖拽过程中要 setValue 跟手，
-      //   而一个 Animated.Value 不能既被 setValue 写、又被原生动画驱动。
-      Animated.spring(capsuleX, {
-        toValue: rect.x,
-        useNativeDriver: false,
-        friction: 9,
-        tension: 80,
-      }).start();
-      void animated;
+
+      if (!animated) {
+        capsuleL.setValue(rect.x);
+        capsuleW.setValue(rect.width);
+        return;
+      }
+
+      // 要跨几格：跨 0 格（原地回弹）就不用抻了
+      const stretch = Math.abs(rect.x - fromX);
+      if (stretch < 1) {
+        Animated.spring(capsuleL, {
+          toValue: rect.x,
+          useNativeDriver: false,
+          speed: 26,
+          bounciness: 10,
+        }).start();
+        Animated.spring(capsuleW, {
+          toValue: rect.width,
+          useNativeDriver: false,
+          speed: 26,
+          bounciness: 6,
+        }).start();
+        return;
+      }
+
+      Animated.parallel([
+        // 左边缘：慢一点、带一点回弹（它是"尾巴"）
+        Animated.spring(capsuleL, {
+          toValue: rect.x,
+          useNativeDriver: false,
+          speed: 11,
+          bounciness: 6,
+        }),
+        // 宽度：先抻到"目标宽 + 距离"（快），落位后立刻收回（见下面 start 回调）
+        Animated.spring(capsuleW, {
+          toValue: rect.width + stretch,
+          useNativeDriver: false,
+          speed: 20,
+          bounciness: 0,
+        }),
+      ]).start(({ finished }) => {
+        if (!finished) return;
+        Animated.spring(capsuleW, {
+          toValue: rect.width,
+          useNativeDriver: false,
+          speed: 12,
+          bounciness: 0,
+        }).start();
+      });
     },
-    [tabRects, capsuleX],
+    [tabRects, capsuleL, capsuleW],
+  );
+
+  /** 把页面和胶囊一起摆到 `indexFloat` 这个连续位置上（拖拽跟手） */
+  const syncTo = useCallback(
+    (indexFloat: number) => {
+      const first = tabRects[0]?.x ?? 0;
+      const stride = (tabRects[1]?.x ?? first) - first || 1;
+      const clamped = Math.min(TABS.length - 1, Math.max(0, indexFloat));
+      pageX.setValue(-clamped * width);
+      // 拖拽时胶囊保持刚体（宽度不动）："流淌"只留给落位
+      capsuleL.setValue(first + clamped * stride);
+    },
+    [tabRects, pageX, capsuleL, width],
   );
 
   // 点 Tab 切过去时，胶囊跟着滑
@@ -283,16 +401,19 @@ function AppShell(): React.JSX.Element {
    * 手指走到哪儿，胶囊和内容就一起跟到哪儿 —— 而不是等松手了页面才跳过去。
    * 两边都调这一个函数，就不会各走各的。
    */
-  const syncTo = useCallback(
-    (indexFloat: number) => {
-      const first = tabRects[0]?.x ?? 0;
-      const stride = (tabRects[1]?.x ?? first) - first || 1;
-      const clamped = Math.min(TABS.length - 1, Math.max(0, indexFloat));
-      pageX.setValue(-clamped * width);
-      capsuleX.setValue(first + clamped * stride);
-    },
-    [tabRects, pageX, capsuleX, width],
-  );
+  // ★ 首帧：tabRects 就位时 saline the capsule values，保证 indicator 不在第一帧里是 width=0
+  useEffect(() => {
+    if (capsuleInit.current) return;
+    if (tabRects.length !== TABS.length || !tabRects[0]) return;
+    capsuleInit.current = true;
+    const i = tabIndexOf(tab);
+    const r = tabRects[i];
+    if (r) {
+      capsuleL.setValue(r.x);
+      capsuleW.setValue(r.width);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabRects, tab]);
 
   /**
    * ★ 按住胶囊左右拖 = 切 Tab。
@@ -530,11 +651,13 @@ function AppShell(): React.JSX.Element {
         <View style={styles.tabBarWrap} pointerEvents="box-none">
           {/* 拖拽手势挂在这一层：内容区不受影响，板块该滚滚 */}
           <View {...tabBarPan.panHandlers}>
-            {/* ★ 这层 `Animated.View`（JS 弹簧回弹）**只在没有真玻璃时**才用：
+            {/* ★ 这一层 `Animated.View`（JS 弹簧回弹）**只在没有真玻璃时**才用：
                 那种情况下按钮垫在玻璃上面、玻璃收不到触摸，全靠它补手感
                 （Android / iOS 26 以下）。
-                iOS 26 有真材质时**不叠** —— 系统的按压反馈是真的，
-                再加一层缩放就是双重放大，反而更假。 */}
+                iOS 26 有真材质时**不叠** —— 系统的按压反馈是真的（整条会鼓），
+                再加一层缩放就是双重放大，反而更假。
+                ★ 但**胶囊那一层两端都要**（见下面 `capsuleScale`）：
+                  "整条扩张，然后胶囊扩张得要超过整条" —— 用户 2026-10-16 的原话。 */}
             <Animated.View
               style={
                 liquidGlass ? undefined : { transform: [{ scale: tabScale }] }
@@ -553,15 +676,22 @@ function AppShell(): React.JSX.Element {
                   cornerRadius={radius.pill}
                   interactive
                 >
-                  {/* 内层胶囊：跟着手指滑动，指到哪跟到哪 */}
+                  {/* 内层胶囊：跟着手指滑动，指到哪跟到哪。
+                      ★ 按住的"扩张"分两层：外层整条 1.04（`tabScale`，仅非真玻璃），
+                        这一颗胶囊 1.16 / 1.05（`capsuleScale*`，两端都有）——
+                        于是胶囊顶出去的那一截会**越过 tab 条的上下边**。 */}
                   {tabRects.length === TABS.length ? (
                     <Animated.View
                       pointerEvents="none"
                       style={[
                         styles.tabIndicator,
                         {
-                          width: tabRects[tabIndexOf(tab)]?.width ?? 0,
-                          transform: [{ translateX: capsuleX }],
+                          width: capsuleW,
+                          transform: [
+                            { translateX: capsuleL },
+                            { scaleX: capsuleScaleX },
+                            { scaleY: capsuleScaleY },
+                          ],
                         },
                       ]}
                     >
@@ -699,7 +829,14 @@ const makeStyles = (color: Palette, glassOn = true, liquidGlass = false) =>
     tabBar: {
       flexDirection: 'row',
       borderRadius: radius.pill,
-      overflow: 'hidden',
+      // ★★ 不能是 `hidden`：选中胶囊按住时要**探出 tab 条之外**
+      //   （"胶囊扩张的要超过整条"），而 Android 的 ViewGroup 默认
+      //   `clipChildren = true`，`overflow: 'hidden'` 会把越界那一截无声裁掉。
+      //   RN 的 `overflow: 'visible'` 在 Android 上就是 `clipChildren = false`。
+      //   ★ 玻璃自己不受影响：两端的玻璃都在**原生那侧自己裁圆角**
+      //     （iOS `effectView.clipsToBounds` + cornerRadius，
+      //      Android `GlassView.onDraw` 里 `clipPath.addRoundRect`）。
+      overflow: 'visible',
       // ★ 垫在玻璃层**后面**的透光底（见 theme 里 bar 的注释）。
       //   之前这里是一层 0.88 的实底，玻璃背后没东西可透 ——
       //   iOS 没东西可糊、Android 没光可透，两端都退化成纯色板，
@@ -716,11 +853,14 @@ const makeStyles = (color: Palette, glassOn = true, liquidGlass = false) =>
         ? color.bar
         : color.barSolid,
     },
+    // ★ 胶囊比 tab 条**上下各探出 `TAB_CAPSULE_LIFT`**：
+    //   静息时"鼓出来一点点"（真玻璃的选中格就是这幅样子），
+    //   按住再叠上 `capsuleScaleY`（1.16），顶出去的那截就明显越过整条了。
     tabIndicator: {
       position: 'absolute',
       left: 0,
-      top: space.xs,
-      bottom: space.xs,
+      top: -TAB_CAPSULE_LIFT,
+      bottom: -TAB_CAPSULE_LIFT,
     },
     tabIndicatorInner: {
       flex: 1,
