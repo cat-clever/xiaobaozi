@@ -1,0 +1,675 @@
+/**
+ * 小包子影视 —— 应用入口。
+ *
+ * 导航是手写的状态机，不引 react-navigation：
+ * 这个 App 只有「三个 Tab + 两级压栈 + 一个设置页」，多一个原生依赖就多一分构建风险。
+ */
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import {
+  Animated,
+  BackHandler,
+  PanResponder,
+  Pressable,
+  StatusBar,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from 'react-native';
+import type { LayoutChangeEvent } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+
+import {
+  GlassBox,
+  LIQUID_GLASS_AVAILABLE,
+  NATIVE_GLASS_AVAILABLE,
+} from './src/components/GlassBox';
+import { isOnHorizontalRow } from './src/components/horizontalRow';
+import { CategoryScreen } from './src/screens/CategoryScreen';
+import { HomeScreen } from './src/screens/HomeScreen';
+import { PlayerScreen } from './src/screens/PlayerScreen';
+import { SearchScreen } from './src/screens/SearchScreen';
+import { SettingsScreen } from './src/screens/SettingsScreen';
+import { ThemeProvider, radius, space, useTheme } from './src/theme';
+import type { Palette } from './src/theme';
+import type { VodItem } from './src/types/schema';
+import { checkForUpdate, useUpdateState } from './src/update/updater';
+
+type Tab = 'home' | 'category' | 'search';
+
+const TABS: Array<{ id: Tab; label: string }> = [
+  { id: 'home', label: '首页' },
+  { id: 'category', label: '分类' },
+  { id: 'search', label: '搜索' },
+];
+
+/** 悬浮 Tab 栏离底边的距离 —— 不贴底，抬上来一点 */
+const TAB_BAR_BOTTOM = space.xl;
+
+type Route = { name: 'tabs' } | { name: 'settings' };
+
+/**
+ * 一次播放会话。
+ *
+ * ★ 播放器**不做成路由**，而是一层常驻的覆盖层 ——
+ *   路由切换会卸载组件树，`<Video>` 一被卸载播放就断了、小窗也就无从谈起。
+ *   所以会话单独存一份状态，播放器浮在路由之上，全屏 / 小窗只是它的两种样式。
+ */
+interface PlaySession {
+  /** 从列表点进来的那张卡片 —— 详情由播放页自己去拉 */
+  item: VodItem;
+  episodeIndex: number;
+}
+
+function App(): React.JSX.Element {
+  return (
+    <ThemeProvider>
+      <AppShell />
+    </ThemeProvider>
+  );
+}
+
+function AppShell(): React.JSX.Element {
+  const { color, glass } = useTheme();
+  const { width } = useWindowDimensions();
+  /**
+   * ★ 玻璃**真的能渲染**时（设置里的开关 + 原生玻璃视图都在），
+   *   Tab 栏才垫透光底 —— 否则玻璃背后没有东西可糊 / 可透，
+   *   要退回接近不透明的底保证文字可读（见 `theme/index.ts` 的 bar / barSolid）。
+   */
+  const glassOn = glass && NATIVE_GLASS_AVAILABLE;
+  /**
+   * 本机拿到的是**真·液态玻璃**（iOS 26+）吗。
+   *
+   * 真玻璃是**自己会折光**的材质，跟"模糊 + 垫一层半透明底"是两套做法：
+   * 背后再垫一层半透明黑，那层会被材质一并采样，玻璃就糊成一块板了。
+   * 所以它同时决定两件事：Tab 栏底色要不要透明、玻璃要不要开交互。
+   */
+  const liquidGlass = glassOn && LIQUID_GLASS_AVAILABLE;
+  const styles = useMemo(
+    () => makeStyles(color, glassOn, liquidGlass),
+    [color, glassOn, liquidGlass],
+  );
+  const [tab, setTab] = useState<Tab>('home');
+  const [route, setRoute] = useState<Route>({ name: 'tabs' });
+  const [session, setSession] = useState<PlaySession | null>(null);
+  /** 播放器是不是收成了角落里的悬浮小窗 */
+  const [mini, setMini] = useState(false);
+
+  /**
+   * 三个 Tab。
+   *
+   * ★ 只有**访问过**的页面才挂载 —— 一上来就把首页 + 分类 + 搜索全挂上，
+   *   三个页面会同时发请求，本来首页就慢，等于雪上加霜。
+   *
+   * ★★ 这里**不用 ScrollView 分页器**，只渲染当前这一页。
+   *   之前用横向 `ScrollView + pagingEnabled` 做左右滑动切页，有两个问题：
+   *     1. 首页的板块本身就是横向滚动的，Android 上两个横向滚动容器嵌套时
+   *        **外层先拦截**（父级的 onInterceptTouchEvent 先跑），手指在板块上
+   *        横滑会被分页器抢走，板块反而滚不动；
+   *     2. 切页要调 `scrollTo`，多一层依赖 —— 它没生效的话点 Tab 就切不动。
+   *   改成"状态直接决定渲染哪一页"之后，点 Tab 是**确定**生效的。
+   *   代价是没有横滑切页 —— 但首页那种结构本来也滑不动，B 站的顶部 Tab
+   *   同样只支持点击。
+   */
+  const [visited, setVisited] = useState<Record<Tab, boolean>>({
+    home: true,
+    category: false,
+    search: false,
+  });
+
+  /** 有没有可升级的新版本 —— 有就在「设置」按钮上点个提示点（见下面的静默检查） */
+  const update = useUpdateState();
+  const hasNewVersion = update.phase === 'available';
+
+  const tabIndexOf = useCallback(
+    (id: Tab): number => TABS.findIndex(t => t.id === id),
+    [],
+  );
+
+  const goToTab = useCallback((id: Tab) => {
+    setTab(id);
+    setVisited(prev => (prev[id] ? prev : { ...prev, [id]: true }));
+  }, []);
+
+  /**
+   * ★ 按住 Tab 时胶囊的"回弹"。
+   *
+   *   真·液态玻璃的 `isInteractive` 只在**触摸打在玻璃自己身上**时才动，
+   *   而 Tab 按钮垫在玻璃上面、命中优先级更高 —— 按在按钮上时玻璃收不到触摸，
+   *   那块空白处才有反应。这一层 JS 弹簧把按钮上那段补上：
+   *   手指按住哪个 Tab，整条胶囊就轻弹一下，松开回弹。
+   *   两个反馈不打架：一个管胶囊空白处，一个管按钮上。
+   */
+  const tabPress = useRef(new Animated.Value(0)).current;
+
+  const setTabHeld = useCallback(
+    (held: boolean) => {
+      Animated.spring(tabPress, {
+        toValue: held ? 1 : 0,
+        useNativeDriver: true,
+        speed: 40,
+        bounciness: 14,
+      }).start();
+    },
+    [tabPress],
+  );
+
+  const tabScale = tabPress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.035],
+  });
+
+  /**
+   * ★★ 内容区横滑切 Tab。
+   *
+   * 这里**自己用 PanResponder 实现分页**，不用原生 ScrollView ——
+   * 因为 Android 上原生 ScrollView 的拦截发生在 **native 层**
+   * （父级的 onInterceptTouchEvent 先于子级），JS 根本没机会判断
+   * "手指是按在哪儿"。换成 JS 驱动之后就能先问一句：
+   * 手指要是按在横向滚动的板块上，就**不接管**，让板块自己滚。
+   *
+   * 用 `useNativeDriver: false`：拖拽过程要 setValue 跟手，
+   * 一个 Animated.Value 不能既被 setValue 写、又被原生动画驱动。
+   */
+  const pageX = useRef(new Animated.Value(0)).current;
+  const settledX = useRef(0);
+
+  const settleTo = useCallback(
+    (index: number) => {
+      settledX.current = -index * width;
+      Animated.spring(pageX, {
+        toValue: settledX.current,
+        useNativeDriver: false,
+        friction: 10,
+        tension: 70,
+      }).start();
+    },
+    [pageX, width],
+  );
+
+  // 点 Tab 切过去时，页面跟着滑
+  useEffect(() => {
+    settleTo(tabIndexOf(tab));
+  }, [tab, tabIndexOf, settleTo]);
+
+  /** 底部 Tab 栏里那个滑动胶囊 */
+  const [tabRects, setTabRects] = useState<Array<{ x: number; width: number }>>(
+    [],
+  );
+  const capsuleX = useRef(new Animated.Value(0)).current;
+  /** 胶囊当前该在哪 —— 拖拽要从这个值算起 */
+  const capsuleTarget = useRef(0);
+
+  const handleTabLayout = useCallback((index: number, e: LayoutChangeEvent) => {
+    const { x, width: w } = e.nativeEvent.layout;
+    setTabRects(prev => {
+      if (prev[index] && prev[index].x === x && prev[index].width === w)
+        return prev;
+      const next = prev.slice();
+      next[index] = { x, width: w };
+      return next;
+    });
+  }, []);
+
+  /** 把胶囊弹到某个下标的位置 */
+  const settleCapsule = useCallback(
+    (index: number, animated = true) => {
+      const rect = tabRects[index];
+      if (!rect) return;
+      capsuleTarget.current = rect.x;
+      // ★ JS 驱动：拖拽过程中要 setValue 跟手，
+      //   而一个 Animated.Value 不能既被 setValue 写、又被原生动画驱动。
+      Animated.spring(capsuleX, {
+        toValue: rect.x,
+        useNativeDriver: false,
+        friction: 9,
+        tension: 80,
+      }).start();
+      void animated;
+    },
+    [tabRects, capsuleX],
+  );
+
+  // 点 Tab 切过去时，胶囊跟着滑
+  useEffect(() => {
+    settleCapsule(tabIndexOf(tab));
+  }, [tab, tabIndexOf, settleCapsule]);
+
+  /**
+   * ★★ 把**页面和胶囊一起**摆到 `indexFloat` 这个连续位置上（0 ~ N-1 之间的小数）。
+   *
+   * 拖胶囊和滑页面是两个方向，但表现必须是同一件事：
+   * 手指走到哪儿，胶囊和内容就一起跟到哪儿 —— 而不是等松手了页面才跳过去。
+   * 两边都调这一个函数，就不会各走各的。
+   */
+  const syncTo = useCallback(
+    (indexFloat: number) => {
+      const first = tabRects[0]?.x ?? 0;
+      const stride = (tabRects[1]?.x ?? first) - first || 1;
+      const clamped = Math.min(TABS.length - 1, Math.max(0, indexFloat));
+      pageX.setValue(-clamped * width);
+      capsuleX.setValue(first + clamped * stride);
+    },
+    [tabRects, pageX, capsuleX, width],
+  );
+
+  /**
+   * ★ 按住胶囊左右拖 = 切 Tab。
+   *
+   * 手势只落在 **Tab 栏**上，内容区完全不管 ——
+   * 这样首页那些横向板块就能正常滚自己的，两边不再抢手势。
+   *
+   * `onStartShouldSetPanResponder` 返回 false、只在横向位移超过阈值时才接管：
+   * 轻点仍然走 Tab 自己的 Pressable（点哪个切哪个），拖动才由这里接管。
+   */
+  const tabBarPan = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_e, g) =>
+          Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy),
+        onPanResponderMove: (_e, g) => {
+          const first = tabRects[0]?.x ?? 0;
+          const last = tabRects[tabRects.length - 1]?.x ?? 0;
+          const stride = (tabRects[1]?.x ?? first) - first || 1;
+          const next = Math.min(
+            last,
+            Math.max(first, capsuleTarget.current + g.dx),
+          );
+          // ★ 页面同步跟手 —— 胶囊在 Tab 空间走了多少，页面就在页空间走多少
+          syncTo((next - first) / stride);
+        },
+        onPanResponderRelease: (_e, g) => {
+          if (!tabRects.length) return;
+          // 按胶囊**当前停在哪**找最近的 Tab，比拿位移除以宽度准
+          const moved = capsuleTarget.current + g.dx;
+          let nearest = 0;
+          for (let i = 0; i < tabRects.length; i += 1) {
+            if (
+              Math.abs(tabRects[i].x - moved) <
+              Math.abs(tabRects[nearest].x - moved)
+            ) {
+              nearest = i;
+            }
+          }
+          const target = TABS[nearest];
+          if (target.id !== tab) {
+            goToTab(target.id); // effect 里会把两边都弹到位
+          } else {
+            // 没换 Tab —— 胶囊和**页面**都要弹回原位
+            // （拖动时页面是跟着走的，只弹胶囊会把页面留在半路）
+            settleCapsule(nearest);
+            settleTo(nearest);
+          }
+        },
+        onPanResponderTerminate: () => settleCapsule(tabIndexOf(tab)),
+      }),
+    [tabRects, tab, goToTab, settleCapsule, settleTo, syncTo, tabIndexOf],
+  );
+
+
+  const pagerPan = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_e, g) =>
+          // ★ 手指按在横向板块上就不接管 —— 那是给板块滚的
+          !isOnHorizontalRow() &&
+          Math.abs(g.dx) > 10 &&
+          Math.abs(g.dx) > Math.abs(g.dy),
+        onPanResponderMove: (_e, g) => {
+          const min = -(TABS.length - 1) * width;
+          const x = Math.min(0, Math.max(min, settledX.current + g.dx));
+          // ★ 同一个同步器 —— 胶囊跟着页面走
+          syncTo(-x / width);
+        },
+        onPanResponderRelease: (_e, g) => {
+          const index = tabIndexOf(tab);
+          let next = index;
+          if (g.dx < -60) next = Math.min(index + 1, TABS.length - 1);
+          else if (g.dx > 60) next = Math.max(index - 1, 0);
+
+          if (next !== index) {
+            goToTab(TABS[next].id); // effect 里会把两边都弹到位
+          } else {
+            // 没滑够就一起弹回去
+            settleTo(index);
+            settleCapsule(index);
+          }
+        },
+        onPanResponderTerminate: () => {
+          settleTo(tabIndexOf(tab));
+          settleCapsule(tabIndexOf(tab));
+        },
+      }),
+    [width, tab, goToTab, settleTo, settleCapsule, syncTo, tabIndexOf],
+  );
+
+  /**
+   * ★ 详情和播放合成一屏：点卡片直接起播第 1 集。
+   *   原先"详情页 → 选集 → 播放页"两屏是重复的，操作上也多一跳。
+   */
+  const openSeries = useCallback((item: VodItem) => {
+    setSession({ item, episodeIndex: 0 });
+    setMini(false);
+  }, []);
+
+  /** 全屏 → 收成小窗（不结束播放） */
+  const collapsePlayer = useCallback(() => setMini(true), []);
+  /** 小窗 → 展开回全屏 */
+  const expandPlayer = useCallback(() => setMini(false), []);
+  /** 小窗上按关闭 —— 结束这次播放 */
+  const closePlayer = useCallback(() => setSession(null), []);
+
+  const backToTabs = useCallback(() => setRoute({ name: 'tabs' }), []);
+
+  /**
+   * ★ 启动时**静默**查一次更新。
+   *
+   *   查到了只在「设置」按钮上点个提示点（不弹窗、不打断任何东西）；
+   *   查不到（离线 / 清单还没生成）就什么都不做 —— 这功能不该在启动路径上
+   *   制造任何失败感。真正的"下载并安装"在设置页里（见 `update/updater.ts`）。
+   */
+  useEffect(() => {
+    void checkForUpdate();
+  }, []);
+
+  /**
+   * 接管 Android 硬件返回键。
+   *
+   * ★ 不接的话系统会直接退出 App。
+   *   播放页 → 详情页 → Tab 层；在 Tab 层但不在首页就先滑回首页；
+   *   只有在首页才交给系统退出。
+   */
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        // 全屏播放中 → 先收成小窗（不打断播放）；已经在小窗 → 关掉这次播放
+        if (session && !mini) {
+          setMini(true);
+          return true;
+        }
+        if (session && mini) {
+          setSession(null);
+          return true;
+        }
+        if (route.name === 'settings') {
+          setRoute({ name: 'tabs' });
+          return true;
+        }
+        if (tab !== 'home') {
+          goToTab('home');
+          return true;
+        }
+        return false;
+      },
+    );
+    return () => subscription.remove();
+  }, [route, tab, goToTab, session, mini]);
+
+  // 全屏播放时状态栏文字要用亮色（视频背景是黑的）；收成小窗后回到主题色
+  const fullscreenPlaying = !!session && !mini;
+
+  const overlay = session ? (
+    // ★ 覆盖层整体 box-none：小窗模式下触摸要能透到下面的 Tab 栏。
+    //   全屏时 PlayerScreen 自己的 root 是 auto，会把整屏吃掉。
+    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      <PlayerScreen
+        item={session.item}
+        episodeIndex={session.episodeIndex}
+        mini={mini}
+        onBack={collapsePlayer}
+        onExpand={expandPlayer}
+        onClose={closePlayer}
+      />
+    </View>
+  ) : null;
+
+  if (route.name === 'settings') {
+    return (
+      <SafeAreaProvider>
+        <StatusBar barStyle={color.statusBar} />
+        <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+          <SettingsScreen onBack={backToTabs} />
+        </SafeAreaView>
+        {overlay}
+      </SafeAreaProvider>
+    );
+  }
+
+  return (
+    <SafeAreaProvider>
+      <StatusBar
+        barStyle={fullscreenPlaying ? 'light-content' : color.statusBar}
+      />
+      <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+        <View style={styles.header}>
+          <View style={styles.headerMain}>
+            <Text style={styles.brand}>小包子影视</Text>
+          </View>
+          <Pressable onPress={() => setRoute({ name: 'settings' })} hitSlop={8}>
+            <GlassBox style={styles.settingsBtn} cornerRadius={radius.pill}>
+              {/* ★ 有新版才出现的小点：不弹窗、不打扰，但一眼看得见 */}
+              <View style={styles.settingsRow}>
+                {hasNewVersion ? <View style={styles.updateDot} /> : null}
+                <Text style={styles.settingsText}>设置</Text>
+              </View>
+            </GlassBox>
+          </Pressable>
+        </View>
+
+        {/*
+          三页并排放在一条横排里，整条按 pageX 平移。
+          都保持挂载 —— 切回来不丢滚动位置。
+        */}
+        <View style={styles.body} {...pagerPan.panHandlers}>
+          <Animated.View
+            style={[
+              styles.pageRow,
+              {
+                width: width * TABS.length,
+                transform: [{ translateX: pageX }],
+              },
+            ]}
+          >
+            <View style={{ width }}>
+              {visited.home ? <HomeScreen onOpen={openSeries} /> : null}
+            </View>
+            <View style={{ width }}>
+              {visited.category ? <CategoryScreen onOpen={openSeries} /> : null}
+            </View>
+            <View style={{ width }}>
+              {visited.search ? <SearchScreen onOpen={openSeries} /> : null}
+            </View>
+          </Animated.View>
+        </View>
+
+        {/* 悬浮玻璃 Tab 栏：居中、不铺满、离底边留一点 */}
+        <View style={styles.tabBarWrap} pointerEvents="box-none">
+          {/* 拖拽手势挂在这一层：内容区不受影响，板块该滚滚 */}
+          <View {...tabBarPan.panHandlers}>
+            {/* ★ `interactive`：iOS 26 上玻璃是**真材质 + `isInteractive`**，
+                按在胶囊空白处会有扩张 / 高光反馈。
+                （层级照 Apple 官方样例：玻璃垫在下面，children 垫在上面。
+                 见 GlassBox.tsx / GlassView.swift。）
+                ★ 外面这层 Animated.View 是**按钮上的**按压回弹 ——
+                  按在 Tab 按钮上时玻璃收不到触摸，靠它兜住手感。 */}
+            <Animated.View style={{ transform: [{ scale: tabScale }] }}>
+              <GlassBox
+                style={styles.tabBar}
+                cornerRadius={radius.pill}
+                interactive
+              >
+                {/* 内层胶囊：跟着手指滑动，指到哪跟到哪 */}
+                {tabRects.length === TABS.length ? (
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[
+                      styles.tabIndicator,
+                      {
+                        width: tabRects[tabIndexOf(tab)]?.width ?? 0,
+                        transform: [{ translateX: capsuleX }],
+                      },
+                    ]}
+                  >
+                    <View style={styles.tabIndicatorInner} />
+                  </Animated.View>
+                ) : null}
+
+                {TABS.map((item, index) => (
+                  <TabButton
+                    key={item.id}
+                    label={item.label}
+                    active={tab === item.id}
+                    onPress={() => goToTab(item.id)}
+                    onPressIn={() => setTabHeld(true)}
+                    onPressOut={() => setTabHeld(false)}
+                    onLayout={e => handleTabLayout(index, e)}
+                  />
+                ))}
+              </GlassBox>
+            </Animated.View>
+          </View>
+        </View>
+      </SafeAreaView>
+      {overlay}
+    </SafeAreaProvider>
+  );
+}
+
+/** 底部 Tab：选中项文字高亮 + 下面一个小点 */
+function TabButton({
+  label,
+  active,
+  onPress,
+  onPressIn,
+  onPressOut,
+  onLayout,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+  /** 按住 / 松开 —— 给外面那层胶囊做按压回弹用 */
+  onPressIn?: () => void;
+  onPressOut?: () => void;
+  onLayout: (e: LayoutChangeEvent) => void;
+}): React.JSX.Element {
+  const { color } = useTheme();
+  const styles = useMemo(() => makeStyles(color), [color]);
+
+  return (
+    <Pressable
+      style={styles.tab}
+      onPress={onPress}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
+      onLayout={onLayout}
+    >
+      <Text style={[styles.tabText, active && styles.tabTextActive]}>
+        {label}
+      </Text>
+      <View style={[styles.tabDot, active && styles.tabDotActive]} />
+    </Pressable>
+  );
+}
+
+const makeStyles = (color: Palette, glassOn = true, liquidGlass = false) =>
+  StyleSheet.create({
+    root: { flex: 1, backgroundColor: color.bg },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: space.lg,
+      paddingTop: space.sm,
+      paddingBottom: space.sm,
+    },
+    headerMain: { flex: 1 },
+    brand: { color: color.text, fontSize: 20, fontWeight: '700' },
+    settingsBtn: {
+      paddingHorizontal: space.lg,
+      paddingVertical: space.sm,
+      borderRadius: radius.pill,
+      overflow: 'hidden',
+    },
+    settingsText: { color: color.text, fontSize: 13 },
+    settingsRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    updateDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: color.accent,
+    },
+    body: { flex: 1, overflow: 'hidden' },
+    // 三页横排，整条按 pageX 平移
+    pageRow: { flexDirection: 'row', height: '100%' },
+    // 悬浮栏：整条居中，不铺满
+    tabBarWrap: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: TAB_BAR_BOTTOM,
+      alignItems: 'center',
+    },
+    // ★ 这里**不设 padding** —— 胶囊是绝对定位的兄弟节点，父级一旦有 padding，
+    //   "left: 0 到底算不算 padding" 在 Yoga 里很容易踩坑（绝对定位按 padding box，
+    //   普通子节点按 content box，两者差一个 padding）。
+    //   留白全部交给每个 Tab 自己的 paddingHorizontal。
+    tabBar: {
+      flexDirection: 'row',
+      borderRadius: radius.pill,
+      overflow: 'hidden',
+      // ★ 垫在玻璃层**后面**的透光底（见 theme 里 bar 的注释）。
+      //   之前这里是一层 0.88 的实底，玻璃背后没东西可透 ——
+      //   iOS 没东西可糊、Android 没光可透，两端都退化成纯色板，
+      //   表现就是"Tab 栏没有液态玻璃效果"。
+      //   玻璃关掉 / 原生玻璃不可用时退回 barSolid。
+      //
+      // ★★ 但 **iOS 26 的真·液态玻璃例外：底色必须是全透明**。
+      //   真玻璃是自己会折光的材质，采样的是它背后的所有东西 ——
+      //   垫一层 rgba(16,16,22,0.5) 会被一并采进去，折射和高光全糊掉，
+      //   看起来就又变回一块深色板。半透明底只是给"模糊兜底"用的。
+      backgroundColor: liquidGlass
+        ? 'transparent'
+        : glassOn
+        ? color.bar
+        : color.barSolid,
+    },
+    tabIndicator: {
+      position: 'absolute',
+      left: 0,
+      top: space.xs,
+      bottom: space.xs,
+    },
+    tabIndicatorInner: {
+      flex: 1,
+      borderRadius: radius.pill,
+      backgroundColor: color.surfaceStrong,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: color.glassBorder,
+    },
+    tab: {
+      alignItems: 'center',
+      paddingHorizontal: space.xl,
+      paddingVertical: space.md,
+    },
+    tabText: { color: color.textDim, fontSize: 15 },
+    tabTextActive: { color: color.text, fontWeight: '700' },
+    tabDot: {
+      width: 4,
+      height: 4,
+      borderRadius: 2,
+      marginTop: 3,
+      backgroundColor: 'transparent',
+    },
+    tabDotActive: { backgroundColor: color.accent },
+  });
+
+export default App;

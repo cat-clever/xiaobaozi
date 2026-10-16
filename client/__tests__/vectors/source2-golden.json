@@ -1,0 +1,172 @@
+{
+  "note": "由 参考/影视站api2.js 录制。仓库不包含参考实现，CI 用这些向量离线对答案。",
+  "md5": {
+    "": "d41d8cd98f00b204e9800998ecf8427e",
+    "abc": "900150983cd24fb0d6963f7d28e17f72",
+    "nvzATwGTRTY8qN6geDtH": "f0645ae40f7bb60b2c4adb7713dfab57",
+    "小包子影视": "d5016c2229ffd656897dee57bee72b81",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "887f30b43b2867f4a9accceee7d16e6c",
+    "{\"uid\":\"x\",\"ts\":1}": "7053d927874754cc0ce597506f071c1e",
+    "zD9[bM4~sF4~uY2)96ab557f6826febf1750000000000": "1c56337da78670137d8368b344782b7f"
+  },
+  "deriveKeyIv": [
+    {
+      "uid": "nvzATwGTRTY8qN6geDtH",
+      "ts": null,
+      "key": "39643237363265326662373664336433",
+      "iv": "61373233363331373339656232393266"
+    },
+    {
+      "uid": "nvzATwGTRTY8qN6geDtH",
+      "ts": 0,
+      "key": "33663362656139643938616566613437",
+      "iv": "32363836663532363861643036346337"
+    },
+    {
+      "uid": "nvzATwGTRTY8qN6geDtH",
+      "ts": 1750000000,
+      "key": "35383139386232306432313862396266",
+      "iv": "35363933326530323332386266636363"
+    },
+    {
+      "uid": "nvzATwGTRTY8qN6geDtH",
+      "ts": 1750000000123,
+      "key": "33383735396164616263376232626663",
+      "iv": "35346165373163373336333239643635"
+    },
+    {
+      "uid": "jciRRolL4MVuzAWRvUTE",
+      "ts": null,
+      "key": "31303832306435653462383736323138",
+      "iv": "64653237323032326633646531633064"
+    },
+    {
+      "uid": "jciRRolL4MVuzAWRvUTE",
+      "ts": 0,
+      "key": "34626261396535626162323463396666",
+      "iv": "34303433303866386639383331643234"
+    },
+    {
+      "uid": "jciRRolL4MVuzAWRvUTE",
+      "ts": 1750000000,
+      "key": "61383237623464633365316265396336",
+      "iv": "62386462313834653139636533623633"
+    },
+    {
+      "uid": "jciRRolL4MVuzAWRvUTE",
+      "ts": 1750000000123,
+      "key": "37353637353834666430386438316164",
+      "iv": "32323063333165366431613730373237"
+    },
+    {
+      "uid": "AAAAAAAAAAAAAAAAAAAA",
+      "ts": null,
+      "key": "35616235306264636664343036626138",
+      "iv": "62316437323765666133633338396666"
+    },
+    {
+      "uid": "AAAAAAAAAAAAAAAAAAAA",
+      "ts": 0,
+      "key": "63626563303765323963393333336165",
+      "iv": "37653165356230646339303332326166"
+    },
+    {
+      "uid": "AAAAAAAAAAAAAAAAAAAA",
+      "ts": 1750000000,
+      "key": "37633365656463323765383938373030",
+      "iv": "35623938386566313431613530366366"
+    },
+    {
+      "uid": "AAAAAAAAAAAAAAAAAAAA",
+      "ts": 1750000000123,
+      "key": "34343830353331376239353639646331",
+      "iv": "61326563393663663633653230313563"
+    }
+  ],
+  "uk": {
+    "nvzATwGTRTY8qN6geDtH": "HQZAcEJY5RZC0cRNQtkGdZ9p5kiNITbMU5uVGcbbAMs=",
+    "jciRRolL4MVuzAWRvUTE": "oMIYJhscZViN5QOJIlFWf1MYHmVAYdrm3zUFCcF+1gw=",
+    "AAAAAAAAAAAAAAAAAAAA": "4SbBed6L48ERPT4qBPzScBeMF4vtcta0PGI/mATVAD8="
+  },
+  "sign": [
+    {
+      "kv": {},
+      "value": "2c86a2d96a43300b528bc4999f83cec3"
+    },
+    {
+      "kv": {
+        "a": "1"
+      },
+      "value": "d38e85d83d0feb4935fd3c8d3a53f34f"
+    },
+    {
+      "kv": {
+        "sid": "abc",
+        "pid": "def"
+      },
+      "value": "877d9984cda4a597274cba067dee671a"
+    },
+    {
+      "kv": {
+        "z": "last",
+        "a": "first",
+        "m": "mid"
+      },
+      "value": "d131098aee536934bd7708ec3237270e"
+    },
+    {
+      "kv": {
+        "page": 1,
+        "sort": "hot",
+        "year": "2026",
+        "type": "tv"
+      },
+      "value": "2313d78bf09f4299e21f8d33ffd8b352"
+    },
+    {
+      "kv": {
+        "t": "1750000000",
+        "dt": "android",
+        "version": "6.9",
+        "uuid": "x",
+        "udid": "y",
+        "pid": "p",
+        "scid": "s",
+        "re": "0"
+      },
+      "value": "1952107700df387385ae5d131d933b8e"
+    }
+  ],
+  "signHeader": [
+    {
+      "uid": "nvzATwGTRTY8qN6geDtH",
+      "ts": 0,
+      "value": "9mE80joPOY+4sKQiLrlH+cLyjGLJBwDdG2Ry+avkWT6BCWTdICaBrTXwcC+0vHKe"
+    },
+    {
+      "uid": "nvzATwGTRTY8qN6geDtH",
+      "ts": 1750000000000,
+      "value": "9mE80joPOY+4sKQiLrlH+cLyjGLJBwDdG2Ry+avkWT7g6O/bwkkf4AuPRa83nbyR3mVXSmSx+TM9TxnHrNsNpw=="
+    },
+    {
+      "uid": "jciRRolL4MVuzAWRvUTE",
+      "ts": 0,
+      "value": "rkeklsuRfR5JhFGBbKN1qxf2gB1wSX+F7T+Jf9MVaom5DMdtn5hmsqnzuTSqhWx2"
+    },
+    {
+      "uid": "jciRRolL4MVuzAWRvUTE",
+      "ts": 1750000000000,
+      "value": "rkeklsuRfR5JhFGBbKN1qxf2gB1wSX+F7T+Jf9MVaolw8wE06S38rgo88J1FEFAm+ZoJYaiRO5E4ZXCbuUwRng=="
+    },
+    {
+      "uid": "AAAAAAAAAAAAAAAAAAAA",
+      "ts": 0,
+      "value": "VpRvTt7PAj/t5laLHtr02yBfeTP9bFdPNhKS/qIpB1Vym9qcJONRHzZBr6SXD/Fz"
+    },
+    {
+      "uid": "AAAAAAAAAAAAAAAAAAAA",
+      "ts": 1750000000000,
+      "value": "VpRvTt7PAj/t5laLHtr02yBfeTP9bFdPNhKS/qIpB1UfqrbqQQta8oZXfBmB580XA9LL2pLCDSDCawIuhkU8UA=="
+    }
+  ]
+}

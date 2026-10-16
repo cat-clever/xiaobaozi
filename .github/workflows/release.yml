@@ -1,0 +1,191 @@
+name: Release
+
+# 打 tag 即出包并发布：Android APK + iOS 未签名 IPA
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的 tag（如 v0.1.0）'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    name: 编译 APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # ★ 不用 android-actions/setup-android：它要安装早已废弃的 `tools` 包，
+      #   在新版 SDK 仓库上必然失败（sdkmanager 回 "Failed to find package 'tools'"）。
+      #   GitHub 的 ubuntu runner **本来就预装 Android SDK**，只需补齐缺的组件。
+      - name: 准备 Android SDK 组件
+        run: |
+          SDKMANAGER=$(find "${ANDROID_HOME}/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -1)
+          echo "sdkmanager: $SDKMANAGER"
+          echo "ANDROID_HOME: $ANDROID_HOME"
+          # 先接受许可，Gradle 后续才能自动补齐 NDK 等组件
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          echo "--- 预装 platforms ---"; ls "${ANDROID_HOME}/platforms" 2>/dev/null || true
+          # 逐个安装：某个包不可用时不拖累其余（sdkmanager 遇到缺失包会整体退出 1）
+          for pkg in "platform-tools" "platforms;android-36" "build-tools;36.0.0"; do
+            echo "== 安装 $pkg"
+            "$SDKMANAGER" "$pkg" || echo "   跳过 $pkg（仓库中不可用）"
+          done
+          echo "--- 安装后 platforms ---"; ls "${ANDROID_HOME}/platforms" 2>/dev/null || true
+
+      - name: 安装依赖
+        working-directory: client
+        run: npm ci --no-audit --no-fund
+
+      - name: 协议层测试（不过就不出包）
+        working-directory: client
+        run: npx vitest run
+
+      - name: 编译 Release APK
+        working-directory: client/android
+        run: |
+          chmod +x gradlew
+          # ★ NDK / SDK 组件是 Gradle 插件自己下载的，runner 上偶发"下载到损坏的
+          #   zip"（实测过一次：Error reading Zip content from a SeekableByteChannel）。
+          #   这类失败重试一遍基本都能过，别为它白等一轮人工重跑。
+          ./gradlew assembleRelease --no-daemon \
+            || { echo "第一次失败，30 秒后重试（多半是 NDK/SDK 下载损坏）"; sleep 30; ./gradlew assembleRelease --no-daemon; }
+
+      - name: 校验签名指纹
+        working-directory: client/android
+        run: |
+          APK=app/build/outputs/apk/release/app-release.apk
+          ls -la "$APK"
+          # 期望指纹（见 android/key.properties）：
+          #   DA:24:7E:97:ED:F7:96:75:18:A8:C3:E9:72:17:40:7E:B7:C4:41:A9:79:EB:27:E1:C9:46:61:96:6E:46:43:7E
+          "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "$APK" || true
+
+      - name: 收集产物
+        run: |
+          mkdir -p dist
+          cp client/android/app/build/outputs/apk/release/app-release.apk \
+             "dist/xiaobaozi-${GITHUB_REF_NAME}.apk"
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: dist/*.apk
+          if-no-files-found: error
+
+  ios:
+    name: 编译未签名 IPA
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: 安装依赖
+        working-directory: client
+        run: npm ci --no-audit --no-fund
+
+      # ★ 和 Android 那边对齐。协议层测试是纯 TS、跟平台无关，本来就只在
+      #   Android job 里跑过一次；但两边都跑一遍才符合"测试不过就不出包"，
+      #   也免得看 workflow 的人以为 iOS 漏了。
+      - name: 协议层测试（不过就不出包）
+        working-directory: client
+        run: npx vitest run
+
+      - name: 安装 CocoaPods 依赖
+        working-directory: client/ios
+        run: |
+          bundle install
+          bundle exec pod install
+
+      - name: 编译（不签名）
+        working-directory: client/ios
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -workspace BaoziVideo.xcworkspace \
+            -scheme BaoziVideo \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            -archivePath build/BaoziVideo.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            archive
+
+      - name: 打包为未签名 IPA
+        run: |
+          mkdir -p dist
+          APP=$(find client/ios/build/BaoziVideo.xcarchive/Products/Applications -maxdepth 1 -name '*.app' | head -1)
+          echo "打包: $APP"
+          rm -rf client/ios/Payload && mkdir -p client/ios/Payload
+          cp -R "$APP" client/ios/Payload/
+          (cd client/ios && zip -qry "$OLDPWD/dist/xiaobaozi-${GITHUB_REF_NAME}-unsigned.ipa" Payload)
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: dist/*.ipa
+          if-no-files-found: error
+
+  release:
+    name: 发布
+    needs: [android, ios]
+    runs-on: ubuntu-latest
+    steps:
+      # ★ `fetch-depth: 0`：生成更新清单时要 `git describe` 找上一个 tag，
+      #   浅克隆（默认 depth 1）找不到历史，清单里的"本版改动"就空了。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 生成 Source JSON、更新清单与发布说明
+        env:
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: python3 .github/scripts/make_release_meta.py
+
+      - name: 发布 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME}"
+          # ★ latest.json 必须一起发：App 的「检查更新」读的是
+          #   `releases/latest/download/latest.json`（latest 语义 = 最新一次 release）
+          ASSETS="dist/*.apk dist/*.ipa source/xiaobaozi.json source/latest.json"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" $ASSETS --clobber
+          else
+            gh release create "$TAG" --title "小包子影视 $TAG" \
+              --notes-file RELEASE_NOTES.md $ASSETS
+          fi
+          gh release view "$TAG" --json url,assets --jq '.url, (.assets[].name)'

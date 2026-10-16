@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标的背景层：与母图背景的中间调一致，前景层负责画包子 -->
+<resources>
+    <color name="ic_launcher_background">#F0803C</color>
+</resources>

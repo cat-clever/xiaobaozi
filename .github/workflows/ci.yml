@@ -1,0 +1,33 @@
+name: CI
+
+# 每次推送都跑协议层的类型检查与单元测试 —— 它们是整个 App 的地基
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_call:
+
+jobs:
+  protocol-tests:
+    name: 协议层测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: 安装依赖
+        working-directory: client
+        run: npm ci --no-audit --no-fund
+
+      - name: 类型检查
+        working-directory: client
+        run: npx tsc --noEmit
+
+      - name: 单元测试（加密向量与参考实现逐字节对答案）
+        working-directory: client
+        run: npx vitest run

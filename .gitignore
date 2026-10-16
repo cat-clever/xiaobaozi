@@ -1,0 +1,63 @@
+# 依赖
+node_modules/
+.pnp/
+.pnp.js
+
+# RN / Metro
+.metro-health-check*
+client/.metro/
+
+# iOS
+client/ios/Pods/
+client/ios/build/
+client/ios/DerivedData/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.ipa
+
+# Android
+client/android/.gradle/
+client/android/build/
+client/android/app/build/
+client/android/local.properties
+*.apk
+*.aab
+*.keystore
+
+# 构建产物
+client/lib/
+dist/
+build/
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+
+# 日志
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# Python 字节码（.github/scripts 下的发布脚本跑一次就会生成）
+__pycache__/
+*.pyc
+
+# 上游协议参考实现与内部设计文档
+# —— 含全部协议密钥与逆向细节，**不进公开仓库**
+参考/
+项目开发说明文档.md
+改动记录.md
+
+# 本地调试产物
+# —— 公开仓库里**只放 client/**，这些留本地
+# 脚本一律放 参考/ 下（它整个不进仓库）
+.device/
+.verify/
+
+# 本地历史备份
+*.bundle
+
+# 一次性实网探针（用完即删，这里兜底防止误提交）
+client/probe/
+client/vitest.probe.config.ts

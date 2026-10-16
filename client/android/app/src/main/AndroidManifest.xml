@@ -1,0 +1,59 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!--
+      端内升级要装 APK。Android 8 起这是普通权限（装上就有），
+      但用户还得在系统设置里给本应用打开「安装未知应用」——
+      没打开时 App 会把自己送到那一页（见 UpdaterModule.openUnknownSourcesSettings）。
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <application
+      android:name=".MainApplication"
+      android:label="@string/app_name"
+      android:icon="@mipmap/ic_launcher"
+      android:roundIcon="@mipmap/ic_launcher_round"
+      android:allowBackup="false"
+      android:theme="@style/AppTheme"
+      android:usesCleartextTraffic="true"
+      android:networkSecurityConfig="@xml/network_security_config"
+      android:supportsRtl="true">
+      <!--
+        android:supportsPictureInPicture —— 画中画（悬浮到桌面）必须在清单里声明，
+        react-native-video 的 PictureInPictureUtil 会去读这个 flag 判断能不能进。
+        configChanges 里那几个 screenSize / smallestScreenSize / orientation 是
+        **必须的**：不声明的话进画中画时 Activity 会被重建，播放直接断。
+      -->
+      <activity
+        android:name=".MainActivity"
+        android:label="@string/app_name"
+        android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+        android:launchMode="singleTask"
+        android:supportsPictureInPicture="true"
+        android:windowSoftInputMode="adjustResize"
+        android:exported="true">
+        <intent-filter>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent-filter>
+      </activity>
+
+      <!--
+        端内升级下载的 APK 要交给系统安装器，而 Android 7 起 `file://` 直接抛
+        FileUriExposedException —— 必须用 FileProvider 包成 content://
+        （见 UpdaterModule.launchInstaller）。
+        ★ authority 必须与 Kotlin 里用的一致：`packageName + ".updater"`
+        （applicationId 就是 com.xiaobaozi.video），`${applicationId}` 由
+          AGP 自动展开。
+      -->
+      <provider
+        android:name="androidx.core.content.FileProvider"
+        android:authorities="${applicationId}.updater"
+        android:exported="false"
+        android:grantUriPermissions="true">
+        <meta-data
+          android:name="android.support.FILE_PROVIDER_PATHS"
+          android:resource="@xml/file_paths" />
+      </provider>
+    </application>
+</manifest>

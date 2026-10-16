@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 的可共享路径。
+  ★ 端内升级下载的 APK 放在 cacheDir/updater/（见 UpdaterModule.download），
+    交给系统安装器时把它包成 content:// 才能给出去。
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="updater" path="updater/" />
+</paths>

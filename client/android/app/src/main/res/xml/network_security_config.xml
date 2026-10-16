@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  允许明文（http）传输。
+
+  ★ 为什么必须开：源站下发的封面图与部分 CDN 分片是 http:// 的
+    （实测封面主机 wim.xzjykj.com、镜像站 chw.ycblhs.com 都是 http）。
+    Android 9（API 28）起默认禁止明文，不开会静默加载失败——
+    表现就是海报全部空白、http 分片播不了。
+
+  这里用 base-config 全局放行，而不是按域名白名单：上游 CDN 域名是
+  动态下发的，无法穷举。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
