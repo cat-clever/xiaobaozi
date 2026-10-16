@@ -7,7 +7,7 @@
  * ★ 直投 / 转发**必须在界面上说清楚**（文档 §5.5.4 的"已知限制"）：
  *   转发模式流经手机，手机一休眠投屏就断 —— 不提示的话用户会以为是 App 坏了。
  */
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -17,7 +17,8 @@ import {
   View,
 } from 'react-native';
 
-import { currentCastDiag } from '../media/mediaServer';
+import { currentCastDiag, fetchServerStats } from '../media/mediaServer';
+import type { MediaServerStats } from '../media/NativeMediaServer';
 import { AirPlayButton, AIRPLAY_AVAILABLE } from './AirPlayButton';
 import { GlassBox } from './GlassBox';
 import { radius, space, useTheme } from '../theme';
@@ -214,25 +215,64 @@ function CastingPanel({
   );
 }
 
-/** 投屏链路的几行诊断（见 `mediaServer.ts` 的 `CastPlaylistDiag`） */
+/**
+ * 投屏链路的几行诊断（见 `mediaServer.ts` 的 `CastPlaylistDiag`）。
+ *
+ * ★ 三件事分开看，才能定位到是哪一环坏了：
+ *   1. **服务在不在干活** —— 请求计数（`fetchServerStats`）。服务没起来的话，
+ *      电视那头和"投过去了但不动"长得一模一样，光看接收端日志分不出来。
+ *   2. **播放列表重写有没有发生** —— 重写成功/失败。
+ *   3. **重写后第一条分片长什么样** —— 直接看后缀。
+ */
 function CastDiagLines({
   styles,
 }: {
   styles: ReturnType<typeof makeStyles>;
 }): React.JSX.Element {
   const diag = currentCastDiag();
-  if (diag === null) {
-    return <Text style={styles.diag}>链路：还没收到接收端的播放列表请求</Text>;
-  }
+  const [stats, setStats] = useState<MediaServerStats | null>(null);
+
+  // 每秒问一次原生服务的请求统计。面板本来就跟着状态轮询在重渲染，
+  // 这里单独取是因为它走的是原生调用、不在 props 里。
+  useEffect(() => {
+    let alive = true;
+    const tick = () => {
+      void fetchServerStats().then((value) => {
+        if (alive) setStats(value);
+      });
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, []);
+
   return (
     <>
       <Text style={styles.diag}>
-        转封装：{diag.remuxed ? '已转 fMP4' : '未转（直通）'} · 重写：
-        {diag.rewritten ? '成功' : '失败（原样透传）'}
+        服务：{stats === null ? '不可用' : stats.running ? '运行中' : '未启动'} · 成功{' '}
+        {stats?.ok ?? 0} / 失败 {stats?.fail ?? 0}
       </Text>
-      <Text style={styles.diag} numberOfLines={1}>
-        首片：{diag.firstSegment}
-      </Text>
+      {stats !== null && stats.lastFail !== '' ? (
+        <Text style={styles.diag} numberOfLines={1}>
+          最后失败：{stats.lastFail}
+        </Text>
+      ) : null}
+      {diag === null ? (
+        <Text style={styles.diag}>链路：还没收到接收端的播放列表请求</Text>
+      ) : (
+        <>
+          <Text style={styles.diag}>
+            转封装：{diag.remuxed ? '已转 fMP4' : '未转（直通）'} · 重写：
+            {diag.rewritten ? '成功' : '失败（原样透传）'}
+          </Text>
+          <Text style={styles.diag} numberOfLines={1}>
+            首片：{diag.firstSegment}
+          </Text>
+        </>
+      )}
     </>
   );
 }

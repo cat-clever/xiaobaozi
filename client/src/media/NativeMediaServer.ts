@@ -63,6 +63,25 @@ export interface MediaServerNativeModule {
    *   换封装，而它那条路在 Android 电视上会崩，见 `segmentNaming.ts`）。
    */
   prepareRemux?(sid: string, segmentUrl: string): Promise<RemuxVerdict>;
+  /**
+   * 请求统计。投屏面板用它显示"服务到底在不在干活"。
+   *
+   * ★ 投屏"投上了但电视不动/崩"时，光看接收端日志分不清是"服务没起来"
+   *   还是"服务起来了但请求失败" —— 这两个计数能一眼分开（2026-10-16）。
+   */
+  stats?(): Promise<MediaServerStats>;
+}
+
+/** 见 `MediaServerModule.kt` 的 `stats` */
+export interface MediaServerStats {
+  /** 成功的请求数（分片 / 播放列表 / 代理取流都算） */
+  ok: number;
+  /** 失败的请求数 */
+  fail: number;
+  /** 最后一次失败的原因（空串 = 还没失败过） */
+  lastFail: string;
+  /** 服务在不在监听 */
+  running: boolean;
 }
 
 const native = (NativeModules as Record<string, unknown>).MediaServer as

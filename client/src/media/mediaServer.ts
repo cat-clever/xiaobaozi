@@ -19,7 +19,7 @@ import {
   isMediaServerAvailable,
   onPlaylistRequest,
 } from './NativeMediaServer';
-import type { PlaylistRequestEvent } from './NativeMediaServer';
+import type { MediaServerStats, PlaylistRequestEvent } from './NativeMediaServer';
 import { firstMediaSegment, rewritePlaylist } from './playlistRewriter';
 import { localSegmentName } from './segmentNaming';
 import type { SignRule } from './segmentSigner';
@@ -72,6 +72,22 @@ let castDiag: CastPlaylistDiag | null = null;
 /** 投屏面板读它（每次渲染读一次，跟着状态轮询刷新） */
 export function currentCastDiag(): CastPlaylistDiag | null {
   return castDiag;
+}
+
+/**
+ * 问一次原生服务的请求统计。
+ *
+ * ★ 用来把"服务没起来"和"服务起来了但请求失败"分开 —— 投屏出问题时
+ *   这两者的表现一模一样（电视不动），但修法完全不同。
+ */
+export async function fetchServerStats(): Promise<MediaServerStats | null> {
+  const native = MediaServerNative;
+  if (!native?.stats) return null;
+  try {
+    return await native.stats();
+  } catch {
+    return null;
+  }
 }
 
 /** 播放列表里第一条分片的名字（去掉域名，只留最后一段）—— 诊断只关心后缀 */

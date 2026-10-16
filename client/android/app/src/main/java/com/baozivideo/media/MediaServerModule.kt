@@ -96,6 +96,19 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
     private var port: Int = 0
 
     private val running = AtomicBoolean(false)
+
+    /**
+     * 请求统计 —— 只给投屏面板显示用。
+     *
+     * ★ 投屏"投上了但电视不动/崩"时，光看接收端日志分不清是"服务没起来"
+     *   还是"服务起来了但请求失败"。这两个计数 + 最后一次失败原因摆出来，
+     *   一眼就能分开（2026-10-16 排查用）。
+     */
+    private val okCount = AtomicInteger(0)
+    private val failCount = AtomicInteger(0)
+
+    @Volatile
+    private var lastFail = ""
     private val sessions = ConcurrentHashMap<String, Session>()
     private val pending = ConcurrentHashMap<String, Pending>()
     private val requestSeq = AtomicInteger(0)
@@ -206,6 +219,29 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
             }
             promise.resolve(remuxVerdict(ok))
         }.start()
+    }
+
+    /**
+     * 请求统计。投屏面板用它显示"服务到底在不在干活"。
+     */
+    @ReactMethod
+    fun stats(promise: Promise) {
+        val map = Arguments.createMap()
+        map.putInt("ok", okCount.get())
+        map.putInt("fail", failCount.get())
+        map.putString("lastFail", lastFail)
+        map.putBoolean("running", running.get())
+        promise.resolve(map)
+    }
+
+    /** 记一次请求结果（成功/失败各一处调用） */
+    private fun noteResult(ok: Boolean, why: String = "") {
+        if (ok) {
+            okCount.incrementAndGet()
+        } else {
+            failCount.incrementAndGet()
+            lastFail = why
+        }
     }
 
     /**
@@ -332,11 +368,11 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         target: String,
         range: String?,
         out: BufferedOutputStream,
-    ) {
+    ): Boolean {
         val remuxer = session.remuxer
         if (remuxer == null) {
             writeSimple(out, 502, "Bad Gateway")
-            return
+            return false
         }
 
         // 探测时已经转好的那一片直接给（顺带省掉一次网络往返）
@@ -344,14 +380,14 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
             val probed = session.probedData
             if (probed != null) {
                 writeBytes(out, probed)
-                return
+                return true
             }
         }
 
         val fetched = fetchUpstream(session, target, null)
         if (fetched == null || fetched.status !in 200..299) {
             writeSimple(out, 502, "Bad Gateway")
-            return
+            return false
         }
 
         // ★ 播放器会预取，两片可能同时在转 —— 转封装器不是线程安全的，串起来
@@ -364,9 +400,10 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         }
         if (fragment == null) {
             writeSimple(out, 502, "Remux Failed")
-            return
+            return false
         }
         writeBytes(out, fragment)
+        return true
     }
 
     /** 这条上游地址是不是播放列表（转封装只接媒体分片，播放列表照常走重写） */
@@ -542,11 +579,11 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
 
             // 转封装会话的**媒体分片**：整段取回、转成 fMP4 再给（播放列表不走这里）
             if (session.remuxer != null && !isPlaylistUrl(target)) {
-                remuxSegment(session, target, range, out)
+                noteResult(remuxSegment(session, target, range, out), "转封装分片失败")
                 return
             }
 
-            proxy(segments[2], target, session, range, out)
+            noteResult(proxy(segments[2], target, session, range, out), "代理取流失败")
         } catch (_: Exception) {
             // 播放器随时会掐连接，这里不值得报错
         } finally {
@@ -585,7 +622,7 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         session: Session,
         range: String?,
         out: BufferedOutputStream,
-    ) {
+    ): Boolean {
         // ★ 每次请求都现算签名 —— wsSecret 只有 30 秒时效
         val finalUrl = session.sign?.let { signUrl(target, it) } ?: target
         val conn = URL(finalUrl).openConnection() as HttpURLConnection
@@ -616,7 +653,7 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
                 writeHead(out, 200, "OK", "application/vnd.apple.mpegurl", body.size.toLong(), null)
                 out.write(body)
                 out.flush()
-                return
+                return true
             }
 
             val stream = if (status in 200..299) conn.inputStream else conn.errorStream
@@ -637,6 +674,9 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
                 }
             }
             out.flush()
+            return status in 200..299
+        } catch (_: Throwable) {
+            return false
         } finally {
             conn.disconnect()
         }
