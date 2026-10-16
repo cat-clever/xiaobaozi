@@ -124,7 +124,36 @@ export function rewritePlaylist(
     })
     .join('\n');
 
-  return mapUri ? withInitSegment(body, mapUri) : body;
+  const completed = withEndList(body);
+  return mapUri ? withInitSegment(completed, mapUri) : completed;
+}
+
+/**
+ * 播放列表**没有 `#EXT-X-ENDLIST` 就补一个**。
+ *
+ * ★★ 这是 2026-10-16 定位到的投屏崩溃根因，**别删**。
+ *
+ *   上游的 m3u8 是「直播式切片」——国内影视站很常见：分片清单是定长的、
+ *   实际就是点播，但**不带 `#EXT-X-ENDLIST`**。
+ *
+ *   HLS 里这个标签的含义是「列表到头了」：
+ *     - 有它 → VOD，播放器知道总共这么多，往下播完就结束；
+ *     - 没有 → 播放器认为这是**直播**，列表还会增长，于是**反复重拉播放列表**
+ *       等新分片出现 —— 而那个新分片永远不会来。
+ *
+ *   投屏场景下的表现就是：拉了几次播放列表、取了一两个分片，然后卡住/崩
+ *   （接收端那边看到的正是这个形状）。
+ *
+ * ★ 接收端自己也有过同样的坑：它的 `MediaRelay` 里对"没有 ENDLIST"单独
+ *   记了一条警告并**按 VOD 处理**。但那只兜住了它自己的中转；播放器直接
+ *   取我们的列表时没有这层兜底 —— 而我们现在走的正是这条路。
+ *
+ * ★ 我们的源全是点播（影视剧），补上它是正确的。真遇到直播源时，这样做的
+ *   后果是"播到当前这一批就停"，而不是无限重拉 —— 仍然是更合理的行为。
+ */
+function withEndList(body: string): string {
+  if (/#EXT-X-ENDLIST/i.test(body)) return body;
+  return body.endsWith('\n') ? `${body}#EXT-X-ENDLIST\n` : `${body}\n#EXT-X-ENDLIST\n`;
 }
 
 /**

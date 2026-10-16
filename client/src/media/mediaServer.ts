@@ -137,10 +137,14 @@ function playlistTagsOf(body: string): string {
  */
 function playlistHeadOf(body: string): string {
   const lines = body.split('\n').filter((line) => line.trim() !== '');
-  return lines
-    .slice(0, 6)
-    .map((line) => (line.length > 60 ? `${line.slice(0, 60)}…` : line))
-    .join(' ⏎ ');
+  if (!lines.length) return '(空)';
+  // ★ 首尾都要看：`#EXT-X-ENDLIST` 这类决定性的标签在**末尾**，
+  //   只显示开头的话会误判成"没有"（2026-10-16 差点栽在这儿）。
+  const brief = (line: string) => (line.length > 56 ? `${line.slice(0, 56)}…` : line);
+  if (lines.length <= 5) return lines.map(brief).join(' ⏎ ');
+  const head = lines.slice(0, 3).map(brief);
+  const tail = lines.slice(-2).map(brief);
+  return `${head.join(' ⏎ ')} ⏎ …(${lines.length} 行)… ⏎ ${tail.join(' ⏎ ')}`;
 }
 
 /** 去掉域名，只留最后两段（诊断显示用） */
