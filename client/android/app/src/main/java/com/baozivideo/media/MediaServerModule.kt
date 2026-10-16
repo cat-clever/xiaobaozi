@@ -168,7 +168,6 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
-    @ReactMethod
     /**
      * 探测这条线路要不要转封装，要的话**先转一片**把参数集拿到手。
      *
@@ -378,6 +377,7 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         out.flush()
     }
 
+    @ReactMethod
     fun closeSession(sid: String, promise: Promise) {
         sessions.remove(sid)
         promise.resolve(null)
