@@ -92,12 +92,23 @@ describe('AES-CBC', () => {
   });
 
   it('密钥或 IV 错误时抛出可诊断的异常，而不是返回乱码', () => {
-    const key = new Uint8Array(randomBytes(16));
-    const iv = new Uint8Array(randomBytes(16));
+    const key = utf8('aZ9$kU5%qI7=yC2=');
+    const iv = utf8('hY2&tN3]kF7,dL7=');
     const ct = aesCbcEncrypt(key, iv, utf8('小包子影视'));
 
-    const wrongKey = new Uint8Array(randomBytes(16));
+    // ★★ 错密钥 / 错 IV **必须是固定字节**，不能用 `randomBytes`。
+    //    这里的报错来自 `aesCbcDecrypt` 的 PKCS#7 补位校验，而**随机**错密钥
+    //    有约 1/256 的概率"补位恰好合法"—— 那时不报错、返回一段乱码，
+    //    这条测试就偶发失败（不是算法错，是测试在赌）。
+    //    2026-10-16 出 v0.2.15 正好撞上：**同一个 commit 的两次 CI**，
+    //    Android 端通过、iOS 端失败（`expected [Function] to throw an error`）。
+    //    固定下来就变成确定性的：要么永远通过，要么永远失败 —— 出包不再靠运气。
+    const wrongKey = utf8('bZ9$kU5%qI7=yC2=');
     expect(() => aesCbcDecrypt(wrongKey, iv, ct)).toThrow(/密钥或 IV/);
+
+    // 错 IV 同理：CBC 里 IV 只带歪第一块，而这段密文正好只有一块
+    const wrongIv = utf8('hY2&tN3]kF7,dL7!');
+    expect(() => aesCbcDecrypt(key, wrongIv, ct)).toThrow(/密钥或 IV/);
   });
 
   it('拒绝非法长度', () => {
