@@ -243,7 +243,8 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
 
         // ③ 是 HEVC。手上这坨可能本来就是完整一片（服务器不认 Range 回了整片，
         //    或者这片本身就比探测长度小），那就直接转；否则整片再来一次
-        val complete = head.status == 200 || head.totalSize == null || head.body.size >= head.totalSize
+        val total = head.totalSize
+        val complete = head.status == 200 || total == null || head.body.size.toLong() >= total
         if (complete && attemptRemux(session, head.body, segmentUrl)) return true
 
         val full = fetchUpstream(session, segmentUrl, null) ?: return false
