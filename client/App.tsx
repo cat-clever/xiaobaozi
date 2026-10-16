@@ -111,8 +111,19 @@ function AppShell(): React.JSX.Element {
    *   要退回接近不透明的底保证文字可读（见 `theme/index.ts` 的 bar / barSolid）。
    */
   const glassOn = glass && NATIVE_GLASS_AVAILABLE;
+  /**
+   * ★★ 本机能不能拿到**真·液态玻璃**，**并且用户没把玻璃关掉**。
+   *
+   * ★ `glassOn` 这一项**不能漏**（2026-10-16 修）：
+   *   `GlassBox` 自己会看 `enabled ?? glass`，但 iOS 26 这一支用的是
+   *   `LiquidGlassView` —— **它没有开关**。漏了 `glassOn` 的话，关掉玻璃后
+   *   真玻璃照旧渲染，而底色已经退成 `barSolid`（0.90 不透明），
+   *   表现就是"一块不透明的板压在玻璃上"（用户报的原话）。
+   */
   const realGlass =
-    Platform.OS === 'ios' && (isLiquidGlassSupported as boolean);
+    glassOn &&
+    Platform.OS === 'ios' &&
+    (isLiquidGlassSupported as boolean);
   /**
    * 本机拿到的是**真·液态玻璃**（iOS 26+）吗。
    *
