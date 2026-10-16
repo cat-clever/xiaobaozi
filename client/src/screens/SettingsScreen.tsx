@@ -72,20 +72,18 @@ export function SettingsScreen({ onBack }: Props): React.JSX.Element {
   }, [manifest]);
 
   /**
-   * 「当前版本」那一行。
+   * 「当前版本」那一行 —— **只显示版本名**，两端一致。
    *
-   * ★ 只显示**版本名**；Android 后面括号里带 `versionCode`。
-   *   iOS 的 `CFBundleVersion` 是构建号、不参与版本比较，
+   * ★ 曾经 Android 后面括号里带 `versionCode`（`0.2.20 (24)`），
+   *   本意是"比版本时看的是它"，但用户 2026-10-16 明确不要这个后缀。
+   *   `versionCode` 仍然照常参与**更新比较**（`manifest.ts` 的 `hasUpdate`），
+   *   只是不再往界面上写。
+   *
+   * ★ iOS 那边本来就不带：`CFBundleVersion` 是构建号、不参与版本比较，
    *   显示出来会被当成"版本号是 15"，反而看不懂（踩过）。
    */
   const currentLabel = update.current
-    ? update.current.version
-      ? `${update.current.version}${
-          Platform.OS === 'android' && update.current.versionCode
-            ? ` (${update.current.versionCode})`
-            : ''
-        }`
-      : '读不到'
+    ? update.current.version || '读不到'
     : '读取中…';
 
   return (
