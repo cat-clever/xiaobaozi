@@ -29,7 +29,8 @@ import kotlin.math.min
  *
  *   抓法：在**每帧绘制之前**（`ViewTreeObserver.OnPreDrawListener`）把自己
  *   那一层（= GlassBox 那个胶囊，含玻璃 + 上面的文字 / 指示胶囊）临时置
- *   `INVISIBLE`，把 `decorView` 画进一张**缩小的位图**（画布平移 + 缩放，
+ *   `INVISIBLE`，把**顶层视图**（`rootView`，公开 API；`View.getWindow()`
+ *   不是公开 API、Kotlin 编不过）画进一张**缩小的位图**（画布平移 + 缩放，
  *   只映射我们这个区域），画完立刻还原。于是拿到的正是"没有玻璃时"的背景。
  *   接着：
  *
@@ -269,8 +270,10 @@ class GlassView(context: Context) : View(context) {
   }
 
   private fun captureBackdrop() {
-    val decor = window?.decorView ?: return
-    val host = hostToHide() ?: return
+    // ★ 用 `rootView`（`View.getRootView()`，公开 API）拿顶层视图：
+    //   `View.getWindow()` **不是**公开 API，Kotlin 里直接编不过（踩过）。
+    val root: View = rootView
+    val host = hostToHide(root) ?: return
 
     val w = max(1, (width / backdropScale).toInt())
     val h = max(1, (height / backdropScale).toInt())
@@ -284,9 +287,14 @@ class GlassView(context: Context) : View(context) {
     val canvas = backdropCanvas ?: return
     canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
 
-    // 自己在**窗口**里的位置：抓的就是这一块
+    // 自己在窗口里的位置 —— 换算成**相对 rootView 左上角**的偏移：
+    // 待会儿画的是 rootView，两个坐标都在窗口坐标系里，减一下就对齐了
     val loc = IntArray(2)
+    val rootLoc = IntArray(2)
     getLocationInWindow(loc)
+    root.getLocationInWindow(rootLoc)
+    val dx = (loc[0] - rootLoc[0]).toFloat()
+    val dy = (loc[1] - rootLoc[1]).toFloat()
 
     val previous = host.visibility
     capturing = true
@@ -294,8 +302,8 @@ class GlassView(context: Context) : View(context) {
     try {
       val save = canvas.save()
       canvas.scale(1f / backdropScale, 1f / backdropScale)
-      canvas.translate(-loc[0].toFloat(), -loc[1].toFloat())
-      decor.draw(canvas)
+      canvas.translate(-dx, -dy)
+      root.draw(canvas)
       canvas.restoreToCount(save)
     } finally {
       host.visibility = previous
@@ -323,16 +331,17 @@ class GlassView(context: Context) : View(context) {
    *
    * ★ 加一道保险：**整屏那么大的层不藏**（那种情况下藏掉会把 App 内容
    *   一起藏没，背景就空了）。宁可退回渐变近似。
+   *
+   *   `root` = `rootView`（顶层视图），拿它的尺寸当"整屏"的参照。
    */
-  private fun hostToHide(): View? {
-    val win = window?.decorView
+  private fun hostToHide(root: View): View? {
     var host: View? = null
     var node = parent as? View
     var level = 0
     while (node != null && level < 8) {
       if (node.width != width || node.height != height) break
-      if (win != null && win.width > 0 && win.height > 0 &&
-        node.width >= win.width * 9 / 10 && node.height >= win.height * 9 / 10
+      if (root.width > 0 && root.height > 0 &&
+        node.width >= root.width * 9 / 10 && node.height >= root.height * 9 / 10
       ) {
         break
       }
@@ -458,6 +467,8 @@ class GlassView(context: Context) : View(context) {
         canvas.clipPath(clipPath)
 
         if (meshVerts.isNotEmpty()) {
+          // ★ Android 的 `drawBitmapMesh` 只有 8 个参数（没有 iOS/Skia 那个
+          //   `filter` 布尔）—— 多写一个 `null` 直接编不过（踩过）。
           canvas.drawBitmapMesh(
             bitmap,
             meshW,
@@ -466,7 +477,6 @@ class GlassView(context: Context) : View(context) {
             0,
             null,
             0,
-            null,
             meshPaint,
           )
         } else {
