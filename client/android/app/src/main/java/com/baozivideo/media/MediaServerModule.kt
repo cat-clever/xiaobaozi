@@ -19,6 +19,10 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.URL
 import java.security.MessageDigest
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
@@ -749,6 +753,10 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         head.append("HTTP/1.1 ").append(status).append(' ').append(reason)
         head.append("\r\n")
         head.append("Content-Type: ").append(contentType).append("\r\n")
+        // ★ RFC 7231 7.1.1.2：源服务器**必须**发 Date。本地播放（同进程 ExoPlayer）
+        //   容忍它缺席，但接收端那边的 HTTP 实现未必 —— 跟 status-line 那个空格
+        //   是同一类问题（2026-10-16）。
+        head.append("Date: ").append(httpDate()).append("\r\n")
         head.append("Accept-Ranges: bytes\r\n")
         head.append("Cache-Control: no-store\r\n")
         if (contentRange != null) head.append("Content-Range: ").append(contentRange).append("\r\n")
@@ -759,6 +767,17 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         head.append("Connection: close\r\n\r\n")
         out.write(head.toString().toByteArray(Charsets.ISO_8859_1))
     }
+
+    /**
+     * HTTP 的 `Date`（RFC 1123 格式，永远是 GMT）。
+     *
+     * ★ 用 `SimpleDateFormat` 而不是 `java.time` —— 后者要 desugaring 才能在
+     *   老 minSdk 上用，为一个日期头不值得引入构建期依赖。
+     */
+    private fun httpDate(): String =
+        SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss 'GMT'", Locale.US)
+            .apply { timeZone = TimeZone.getTimeZone("GMT") }
+            .format(Date())
 
     /** 常见状态码的标准 reason-phrase。透传上游时用得上（见 `writeHead`） */
     private fun reasonOf(status: Int): String = when (status) {
