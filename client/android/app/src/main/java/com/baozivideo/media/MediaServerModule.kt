@@ -659,9 +659,16 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
 
             val proxied = proxy(segments[2], target, session, range, out)
             noteResult(proxied.ok, "代理取流失败")
+            // ★ 长度对不上时把声明值也摆出来 —— 截断是"看着 ok 其实没写全"
+            val sizeNote =
+                if (proxied.declared >= 0 && proxied.bytes < proxied.declared) {
+                    "${proxied.bytes}/${proxied.declared}B(截断!)"
+                } else {
+                    "${proxied.bytes}B"
+                }
             noteRecent(
                 "取流 $shortName [$rangeTag] ${if (proxied.ok) "ok" else "FAIL"}" +
-                    " ${proxied.bytes}B/${proxied.status}/${proxied.magic}",
+                    " $sizeNote/${proxied.status}/${proxied.magic}",
             )
         } catch (_: Exception) {
             // 播放器随时会掐连接，这里不值得报错
@@ -709,6 +716,8 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         val status: Int,
         val bytes: Long,
         val magic: String,
+        /** 上游声明的 Content-Length（-1 = 没声明）。★ 跟 `bytes` 对比就能看出有没有被截断 */
+        val declared: Long,
     )
 
     private fun proxy(
@@ -748,7 +757,7 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
                 writeHead(out, 200, "OK", "application/vnd.apple.mpegurl", body.size.toLong(), null)
                 out.write(body)
                 out.flush()
-                return ProxyResult(true, 200, body.size.toLong(), "M3U8")
+                return ProxyResult(true, 200, body.size.toLong(), "M3U8", body.size.toLong())
             }
 
             val stream = if (status in 200..299) conn.inputStream else conn.errorStream
@@ -777,9 +786,19 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
                 }
             }
             out.flush()
-            return ProxyResult(status in 200..299, status, written, magic)
+            // ★ 上游声明了长度、我们却没写够 = 响应被截断。播放器等不到剩下的
+            //   就会放弃这一片、重载播放列表 —— 而状态码还是 2xx，"ok"是假的。
+            val declared = conn.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
+            val truncated = declared >= 0 && written < declared
+            return ProxyResult(
+                status in 200..299 && !truncated,
+                status,
+                written,
+                magic,
+                declared,
+            )
         } catch (_: Throwable) {
-            return ProxyResult(false, -1, 0, "")
+            return ProxyResult(false, -1, 0, "", -1)
         } finally {
             conn.disconnect()
         }
