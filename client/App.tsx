@@ -218,6 +218,40 @@ function AppShell(): React.JSX.Element {
     });
   }, []);
 
+  /**
+   * ★★ 真·液态玻璃下"按的是哪个 Tab" —— 从**落点 x** 反推。
+   *
+   *   为什么非要这么绕：`UIGlassEffect` 的交互反馈（按住扩张 + 起高光）只在
+   *   **触摸打中玻璃自己**时才动。以前按钮垫在玻璃上面、命中优先级更高，
+   *   手指永远先落在按钮上 —— 玻璃收不到触摸，那个反馈就只出现在胶囊空白处，
+   *   按钮上只能靠一层 JS 弹簧糊弄（一眼假）。
+   *
+   *   现在按钮退成纯展示层（`TabButton` 的 `passive`），触摸落到玻璃上 →
+   *   **系统原生动画**；顺便拿 `locationX` 算按的是哪一项。
+   *   `locationX` 是相对**触摸目标**（那层玻璃）的坐标，而玻璃与胶囊同尺寸
+   *   （`styles.tabBar` 没有 padding，玻璃是 `inset 0` 的绝对定位），
+   *   所以它的 x 就等于在胶囊里的 x，跟 `tabRects`（胶囊内坐标）同一套。
+   */
+  const pressTabAt = useCallback(
+    (x: number) => {
+      if (!tabRects.length) return;
+      // 先找落点**所在**的那一项
+      let hit = tabRects.findIndex(r => x >= r.x && x <= r.x + r.width);
+      if (hit < 0) {
+        // 落在边界外（手指滑出按钮一点点）就按最近的**中心**算，
+        // 别让这一下白点
+        hit = 0;
+        for (let i = 0; i < tabRects.length; i += 1) {
+          const center = tabRects[i].x + tabRects[i].width / 2;
+          const best = tabRects[hit].x + tabRects[hit].width / 2;
+          if (Math.abs(center - x) < Math.abs(best - x)) hit = i;
+        }
+      }
+      goToTab(TABS[hit].id);
+    },
+    [tabRects, goToTab],
+  );
+
   /** 把胶囊弹到某个下标的位置 */
   const settleCapsule = useCallback(
     (index: number, animated = true) => {
@@ -496,46 +530,59 @@ function AppShell(): React.JSX.Element {
         <View style={styles.tabBarWrap} pointerEvents="box-none">
           {/* 拖拽手势挂在这一层：内容区不受影响，板块该滚滚 */}
           <View {...tabBarPan.panHandlers}>
-            {/* ★ `interactive`：iOS 26 上玻璃是**真材质 + `isInteractive`**，
-                按在胶囊空白处会有扩张 / 高光反馈。
-                （层级照 Apple 官方样例：玻璃垫在下面，children 垫在上面。
-                 见 GlassBox.tsx / GlassView.swift。）
-                ★ 外面这层 Animated.View 是**按钮上的**按压回弹 ——
-                  按在 Tab 按钮上时玻璃收不到触摸，靠它兜住手感。 */}
-            <Animated.View style={{ transform: [{ scale: tabScale }] }}>
-              <GlassBox
-                style={styles.tabBar}
-                cornerRadius={radius.pill}
-                interactive
-              >
-                {/* 内层胶囊：跟着手指滑动，指到哪跟到哪 */}
-                {tabRects.length === TABS.length ? (
-                  <Animated.View
-                    pointerEvents="none"
-                    style={[
-                      styles.tabIndicator,
-                      {
-                        width: tabRects[tabIndexOf(tab)]?.width ?? 0,
-                        transform: [{ translateX: capsuleX }],
-                      },
-                    ]}
-                  >
-                    <View style={styles.tabIndicatorInner} />
-                  </Animated.View>
-                ) : null}
+            {/* ★ 这层 `Animated.View`（JS 弹簧回弹）**只在没有真玻璃时**才用：
+                那种情况下按钮垫在玻璃上面、玻璃收不到触摸，全靠它补手感
+                （Android / iOS 26 以下）。
+                iOS 26 有真材质时**不叠** —— 系统的按压反馈是真的，
+                再加一层缩放就是双重放大，反而更假。 */}
+            <Animated.View
+              style={
+                liquidGlass ? undefined : { transform: [{ scale: tabScale }] }
+              }
+            >
+              {/* ★★ 触摸面 = **玻璃**（iOS 26）。
+                  按钮那一层已退成纯展示（`passive`），所以手指一定先打在玻璃上：
+                    · `UIGlassEffect(isInteractive)` 的扩张 / 高光**真的会动**
+                    · RN 的 responder 从玻璃那层往上冒泡到这个 `Pressable`，
+                      再用 `locationX` 反推按的是哪一项（见 `pressTabAt`）
+                  没有真玻璃时（Android / iOS 26 以下）按钮自己就是 Pressable、
+                  命中优先级更高，这里的 onPress 根本不会触发 —— 两边不打架。 */}
+              <Pressable onPress={e => pressTabAt(e.nativeEvent.locationX)}>
+                <GlassBox
+                  style={styles.tabBar}
+                  cornerRadius={radius.pill}
+                  interactive
+                >
+                  {/* 内层胶囊：跟着手指滑动，指到哪跟到哪 */}
+                  {tabRects.length === TABS.length ? (
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[
+                        styles.tabIndicator,
+                        {
+                          width: tabRects[tabIndexOf(tab)]?.width ?? 0,
+                          transform: [{ translateX: capsuleX }],
+                        },
+                      ]}
+                    >
+                      <View style={styles.tabIndicatorInner} />
+                    </Animated.View>
+                  ) : null}
 
-                {TABS.map((item, index) => (
-                  <TabButton
-                    key={item.id}
-                    label={item.label}
-                    active={tab === item.id}
-                    onPress={() => goToTab(item.id)}
-                    onPressIn={() => setTabHeld(true)}
-                    onPressOut={() => setTabHeld(false)}
-                    onLayout={e => handleTabLayout(index, e)}
-                  />
-                ))}
-              </GlassBox>
+                  {TABS.map((item, index) => (
+                    <TabButton
+                      key={item.id}
+                      label={item.label}
+                      active={tab === item.id}
+                      passive={liquidGlass}
+                      onPress={() => goToTab(item.id)}
+                      onPressIn={() => setTabHeld(true)}
+                      onPressOut={() => setTabHeld(false)}
+                      onLayout={e => handleTabLayout(index, e)}
+                    />
+                  ))}
+                </GlassBox>
+              </Pressable>
             </Animated.View>
           </View>
         </View>
@@ -549,6 +596,7 @@ function AppShell(): React.JSX.Element {
 function TabButton({
   label,
   active,
+  passive,
   onPress,
   onPressIn,
   onPressOut,
@@ -556,14 +604,43 @@ function TabButton({
 }: {
   label: string;
   active: boolean;
+  /**
+   * ★ **纯展示**：只负责画，完全不接收触摸。
+   *
+   *   iOS 26 的真玻璃必须"手指打在玻璃自己身上"才有系统的按压反馈，
+   *   所以这一层要让开：触摸穿透到下面的玻璃，
+   *   由外面那层 `Pressable` 从落点反推按的是哪一项（见 `pressTabAt`）。
+   *
+   *   ★ 用 `pointerEvents="none"` 而不是让它可点但不管事 ——
+   *     前者在 iOS 上直接把 `userInteractionEnabled` 置 false，
+   *     触摸才**真的**会落到玻璃上。
+   */
+  passive?: boolean;
   onPress: () => void;
-  /** 按住 / 松开 —— 给外面那层胶囊做按压回弹用 */
+  /** 按住 / 松开 —— 给外面那层胶囊做按压回弹用（真玻璃下用不到） */
   onPressIn?: () => void;
   onPressOut?: () => void;
   onLayout: (e: LayoutChangeEvent) => void;
 }): React.JSX.Element {
   const { color } = useTheme();
   const styles = useMemo(() => makeStyles(color), [color]);
+
+  const content = (
+    <>
+      <Text style={[styles.tabText, active && styles.tabTextActive]}>
+        {label}
+      </Text>
+      <View style={[styles.tabDot, active && styles.tabDotActive]} />
+    </>
+  );
+
+  if (passive) {
+    return (
+      <View style={styles.tab} pointerEvents="none" onLayout={onLayout}>
+        {content}
+      </View>
+    );
+  }
 
   return (
     <Pressable
@@ -573,10 +650,7 @@ function TabButton({
       onPressOut={onPressOut}
       onLayout={onLayout}
     >
-      <Text style={[styles.tabText, active && styles.tabTextActive]}>
-        {label}
-      </Text>
-      <View style={[styles.tabDot, active && styles.tabDotActive]} />
+      {content}
     </Pressable>
   );
 }
