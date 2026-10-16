@@ -45,6 +45,16 @@ export interface Palette {
   glassBorder: string;
   /** 玻璃上缘的高光（"折射"感就靠它） */
   glassHighlight: string;
+  /**
+   * 选中胶囊那层玻璃的**着色**（iOS 26 用，传给 `LiquidGlassView` 的 `tintColor`）。
+   *
+   * ★ 为什么必须单独给一个色：胶囊跟整条是**同一份材质**，不着色叠在一起
+   *   根本看不出哪一格被选中（用户 2026-10-16 报「内部的胶囊看不到了」）。
+   *   给它一层白釉，胶囊就明确地"亮"出来 —— 参考图里那颗胶囊就是这个观感。
+   *
+   * ★ 亮色主题给的 alpha 更高：浅底上白釉要更浓才压得住。
+   */
+  glassCapsule: string;
 
   /**
    * 底部 Tab 栏**垫在玻璃层后面**的透光底（玻璃开启时用）。
@@ -90,6 +100,7 @@ export const DARK: Palette = {
   glass: 'rgba(255,255,255,0.10)',
   glassBorder: 'rgba(255,255,255,0.22)',
   glassHighlight: 'rgba(255,255,255,0.42)',
+  glassCapsule: 'rgba(255,255,255,0.26)',
   // 深色：iOS 0.50（有真模糊） / Android 0.66（没模糊，留多点底）
   bar: Platform.OS === 'ios' ? 'rgba(16,16,22,0.50)' : 'rgba(16,16,22,0.66)',
   barSolid: 'rgba(16,16,22,0.88)',
@@ -122,6 +133,7 @@ export const LIGHT: Palette = {
   glass: 'rgba(255,255,255,0.52)',
   glassBorder: 'rgba(255,255,255,0.80)',
   glassHighlight: 'rgba(255,255,255,0.95)',
+  glassCapsule: 'rgba(255,255,255,0.72)',
   // 亮色：白字底反过来 —— iOS 0.60（有真模糊） / Android 0.75（没模糊）
   bar: Platform.OS === 'ios' ? 'rgba(255,255,255,0.60)' : 'rgba(255,255,255,0.75)',
   barSolid: 'rgba(255,255,255,0.90)',

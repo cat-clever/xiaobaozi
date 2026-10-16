@@ -43,7 +43,6 @@ import { SearchScreen } from './src/screens/SearchScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { ThemeProvider, radius, space, useTheme } from './src/theme';
 import {
-  LiquidGlassContainerView,
   LiquidGlassView,
   isLiquidGlassSupported,
 } from '@callstack/liquid-glass';
@@ -61,15 +60,6 @@ const TABS: Array<{ id: Tab; label: string }> = [
 
 /** 悬浮 Tab 栏离底边的距离 —— 不贴底，抬上来一点 */
 const TAB_BAR_BOTTOM = space.xl;
-
-/**
- * iOS 26 `UIGlassContainerEffect` 的**融合距离**：两颗玻璃离得比这个近就会
- * 融成一个形状（系统 Tab 栏的选中胶囊就是这么"长"出来的）。
- *
- * ★ 太小 → 胶囊跟整条各画各的，重叠处会叠成一块更厚的玻璃，看着脏；
- *   太大 → 相邻的整条会被一起吸进去，形状糊掉。12 是照系统观感试的手感值。
- */
-const GLASS_MERGE_SPACING = 12;
 
 
 type Route = { name: 'tabs' } | { name: 'settings' };
@@ -609,6 +599,7 @@ function AppShell(): React.JSX.Element {
             style={[StyleSheet.absoluteFill, { borderRadius: radius.pill }]}
             effect="regular"
             colorScheme={glassScheme}
+            tintColor={color.glassCapsule}
           />
         ) : (
           <View style={styles.tabIndicatorInner} />
@@ -705,48 +696,44 @@ function AppShell(): React.JSX.Element {
           {/* 拖拽手势挂在这一层：内容区不受影响，板块该滚滚 */}
           <View {...tabBarPan.panHandlers}>
             {/*
-              ★★ iOS 26（真材质）：**两颗玻璃塞进同一个 `UIGlassContainerEffect`**
-                 —— 这是参考图那个效果的关键，不是靠 `scaleY` 硬撑出来的。
+              ★★ 为什么**不用** `LiquidGlassContainerView`（踩过，别再走回去）：
 
-                 系统 Tab 栏的选中胶囊不是"画"上去的一块，而是**另一颗玻璃**：
-                 它跟整条靠得够近时被容器融成**一个形状**，
-                 于是胶囊顶出去的那一截自然越过整条的上下边
-                 （参考图里"胶囊探出整条"就是这个）。
+                 `UIGlassContainerEffect` 是**合并**语义 —— 把多颗玻璃融成
+                 **一个形状**。我们的胶囊整颗都躺在整条里面，融完就等于整条本身，
+                 **什么都看不见**（用户 2026-10-16 报「内部的胶囊看不到了」）。
+                 而且它在 contentView 里排在整条**前面**，也就是压在整条玻璃
+                 **下面**，双重地被吃掉。
 
-                 ★ 层级：**胶囊在前、整条在后** —— container 的 contentView 按
-                   插入顺序叠。探出去的那截露在外面，跟整条重叠的部分融成一块。
+                 现在改成跟 iOS 26 以下那一支**同一个结构**：胶囊是整条玻璃的
+                 **子节点** —— 于是它画在整条玻璃材质**上面**、三个按钮**下面**，
+                 不会被谁盖住。探出去的那一截靠 `capsuleScale*`（两端同一套）。
+
+                 ★ 但光有玻璃还不够：胶囊跟整条是**同一份材质**，叠在一起看不出
+                   差别。所以给胶囊那颗玻璃上了 `tintColor`（见 `capsule`），
+                   让它明确地亮出来。
 
                  ★ 这一支**不叠** JS 弹簧（`tabScale`）：系统的按压反馈是真的
                    （整条会鼓），再加一层缩放就是双重放大，反而更假。
-
-                 ★ 没有真材质的机型（iOS 26 以下 / Android）走下面那一支 ——
-                   还是老办法：`GlassBox` + 一颗 JS 动画的实心胶囊。
             */}
             {realGlass ? (
-              <LiquidGlassContainerView
-                spacing={GLASS_MERGE_SPACING}
-                style={styles.tabBarGroup}
-                pointerEvents="box-none"
-              >
-                {capsule}
-                {/* ★★ 触摸面 = **玻璃**。
-                    按钮那一层已退成纯展示（`passive`），所以手指一定先打在玻璃上：
-                      · `UIGlassEffect(isInteractive)` 的扩张 / 高光**真的会动**
-                      · RN 的 responder 从玻璃那层往上冒泡到这个 `Pressable`，
-                        再用 `locationX` 反推按的是哪一项（见 `pressTabAt`） */}
-                <Pressable onPress={e => pressTabAt(e.nativeEvent.locationX)}>
-                  {/* ★ 同样不传 `cornerRadius`：圆角由 `styles.tabBar` 的
-                      `borderRadius` 带过去（见胶囊那边的注释） */}
-                  <LiquidGlassView
-                    style={styles.tabBar}
-                    interactive
-                    effect="regular"
-                    colorScheme={glassScheme}
-                  >
-                    {tabButtons}
-                  </LiquidGlassView>
-                </Pressable>
-              </LiquidGlassContainerView>
+              <Pressable onPress={e => pressTabAt(e.nativeEvent.locationX)}>
+                {/* ★ 不传 `cornerRadius`：`LiquidGlassView` 没有这个属性，
+                    圆角由 `styles.tabBar` 的 `borderRadius` 带过去
+                    （见 `LiquidGlassView.mm` 的 `layoutSubviews`）。
+                    ★★ 触摸面 = **玻璃**：按钮那一层已退成纯展示（`passive`），
+                    所以手指一定先打在玻璃上 —— `UIGlassEffect(isInteractive)`
+                    的扩张 / 高光**真的会动**；RN 的 responder 再从玻璃那层
+                    冒泡到这个 `Pressable`，用 `locationX` 反推按的是哪一项。 */}
+                <LiquidGlassView
+                  style={styles.tabBar}
+                  interactive
+                  effect="regular"
+                  colorScheme={glassScheme}
+                >
+                  {capsule}
+                  {tabButtons}
+                </LiquidGlassView>
+              </Pressable>
             ) : (
               /* ★ 这一层 `Animated.View`（JS 弹簧回弹）只在没有真玻璃时才用：
                   那种情况下按钮垫在玻璃上面、玻璃收不到触摸，全靠它补手感。 */
@@ -911,14 +898,6 @@ const makeStyles = (
         ? color.bar
         : color.barSolid,
     },
-    /**
-     * iOS 26 那颗 `UIGlassContainerEffect` 的外壳 —— **尺寸跟着整条走**。
-     *
-     * ★ 它自己不占额外空间：里面的胶囊是绝对定位、整条是唯一的在流子节点，
-     *   所以这一层的高度 = 整条的高度。胶囊探出去的那一截靠 `overflow: visible`
-     *   露出来（`UIVisualEffectView` 默认也不裁）。
-     */
-    tabBarGroup: { overflow: 'visible' },
     tabIndicator: {
       position: 'absolute',
       left: 0,

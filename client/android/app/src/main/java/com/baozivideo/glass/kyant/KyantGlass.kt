@@ -12,6 +12,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -298,12 +299,28 @@ fun KyantGlass(
     Box(
         modifier
             .fillMaxSize()
+            /*
+             * ★★ 这一行 `clip(shape)` **不能省** —— 少了它，玻璃会画成一整块**矩形**
+             *    （表现为 Tab 栏底下露出一条灰条，四角从圆角外戳出来）。
+             *
+             *   为什么库自己不裁：`drawBackdrop` 的形状裁剪只作用在**内容**上
+             *   （`DrawBackdropNode.MeasureScope.measure` 里那个
+             *   `placeable.placeWithLayer(layerBlock = { clip = true; shape = ... })`），
+             *   而**背景层**是 `drawLayer(graphicsLayer)` 直接画进当前画布的 ——
+             *   它**完全不裁**（`internal/LayerRecorder.kt` 的 `recordLayer` 只做录制，
+             *   没有任何 outline / clip）。
+             *
+             *   叠加我们自己把材质层往外扩了 `padding`（见下面参数），
+             *   那个矩形比视图还大一圈 —— 所以必须在**自己这一层**把形状裁上。
+             */
+            .clip(shape)
             .drawBackdrop(
                 backdrop = canvasBackdrop,
                 shape = { shape },
                 effects = {
-                    // ★ 顺序不能反：vibrancy 先把 renderEffect 建出来，
-                    //   后面的 blur 才会把 padding 撑开（见上面那段说明）
+                    // ★ 顺序有讲究：`vibrancy()` 先给 `renderEffect` 建出底，
+                    //   后面 `blur()` 才是"往已有的 renderEffect 上再包一层"
+                    //   （见库里 `ColorFilter.kt` / `Blur.kt`）
                     vibrancy()
                     blur(blurRadiusPx)
                     lens(refractionHeightPx, refractionAmountPx)
