@@ -156,6 +156,11 @@ notes = f"""## 小包子影视 {TAG}
 
 免费 Apple ID 的证书 **7 天过期**，到期后 App 无法启动、必须刷新。
 推荐用 [SideStore](https://sidestore.io/) 在设备本机自动续签，无需常连电脑。
+
+### 已知风险
+
+本项目依赖上游内容源，协议随时可能变更。上游一变，App 可能暂时无法播放，
+需要重新适配才能恢复 —— 这是这类客户端的固有风险，不是偶发故障。
 """
 
 with open("RELEASE_NOTES.md", "w", encoding="utf-8") as f:
