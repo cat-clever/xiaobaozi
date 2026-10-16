@@ -97,8 +97,8 @@ android {
         applicationId "com.xiaobaozi.video"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 18
-        versionName "0.2.14"
+        versionCode 19
+        versionName "0.2.15"
 
         // ★ 必须开明文传输：封面图与部分 CDN 分片是 http://
         //   （RN 的 gradle 插件默认在 release 下置为 false，会拦掉这些请求）
