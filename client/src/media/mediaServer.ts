@@ -67,6 +67,13 @@ export interface CastPlaylistDiag {
   remuxed: boolean;
   /** 没启用的话，为什么（空串 = 启用了） */
   remuxWhy: string;
+  /**
+   * 我们**实际发出去**的那份播放列表里几个关键行。
+   *
+   * ★ 接收端是按这份播放列表决定怎么播的 —— 它期待什么、我们给了什么，
+   *   对不上的时候光看"重写成功"没用，得看到正文（2026-10-16）。
+   */
+  playlistTags: string;
 }
 
 let castDiag: CastPlaylistDiag | null = null;
@@ -90,6 +97,28 @@ export async function fetchServerStats(): Promise<MediaServerStats | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * 播放列表里几个**决定接收端怎么播**的标签。
+ *
+ * ★ 挑的都是会影响判断的：`EXT-X-KEY`（加密，转封装要跳过）、`EXT-X-MAP`
+ *   （fMP4 体系）、`EXT-X-VERSION`（决定播放器按哪套规则解）、`EXT-X-ENDLIST`
+ *   （VOD 还是直播）。对不上"约定"时，这几行就是证据。
+ */
+function playlistTagsOf(body: string): string {
+  const wanted = ['#EXT-X-VERSION', '#EXT-X-MAP', '#EXT-X-KEY', '#EXT-X-ENDLIST', '#EXT-X-BYTERANGE'];
+  const found: string[] = [];
+  for (const line of body.split('\n')) {
+    const trimmed = line.trim();
+    for (const tag of wanted) {
+      if (trimmed.toUpperCase().startsWith(tag)) {
+        // 只留标签本身与值，别把长 URI 塞进面板
+        found.push(trimmed.length > 48 ? `${trimmed.slice(0, 48)}…` : trimmed);
+      }
+    }
+  }
+  return found.length ? found.join(' | ') : '（没有 KEY / MAP / ENDLIST 等标签）';
 }
 
 /** 播放列表里第一条分片的名字（去掉域名，只留最后一段）—— 诊断只关心后缀 */
@@ -277,6 +306,7 @@ function handlePlaylistRequest(event: PlaylistRequestEvent): void {
         firstSegment: firstSegmentName(output),
         remuxed: session.usesRemux,
         remuxWhy: session.remuxWhy,
+        playlistTags: playlistTagsOf(output),
       };
     }
   }

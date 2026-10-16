@@ -286,6 +286,9 @@ function CastDiagLines({
           <Text style={styles.diag} numberOfLines={1}>
             首片：{diag.firstSegment}
           </Text>
+          <Text style={styles.diag} numberOfLines={3}>
+            标签：{diag.playlistTags}
+          </Text>
         </>
       )}
     </>
