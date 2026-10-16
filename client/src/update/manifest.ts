@@ -115,6 +115,49 @@ export function hasUpdate(
   return compareVersions(manifest.version, current.version) > 0;
 }
 
+/**
+ * 收下原生报的"本机装的是哪一版"。
+ *
+ * ★★ 原生两端都把**版本名**放在 `versionName` 里
+ *   （Android = `PackageInfo.versionName`，iOS = `CFBundleShortVersionString`），
+ *   而 JS 一开始只认 `version` —— iOS 上就拿到了**空串**，而 iOS 是
+ *   **按版本号字符串比**的：`'0.2.11' > ''` 恒成立，于是**永远**提示"发现新版本"，
+ *   界面上「当前版本」也成了空（只剩个 `(15)` 构建号）。
+ *   Android 侥幸没事 —— 它比的是 `versionCode`。所以这里两个键名都认。
+ * ★ 名字对不上就**返回空串**，由 `canCompare` 判成"问不到版本号"；
+ *   绝不编一个版本号出来（编错了比不显示更糟）。
+ */
+export function normalizeCurrentVersion(raw: unknown): CurrentVersion {
+  const o = (raw ?? {}) as Record<string, unknown>;
+  return {
+    version: asString(o.version) || asString(o.versionName),
+    versionCode: asInt(o.versionCode),
+  };
+}
+
+/**
+ * 本机版本信息**够不够**判断要不要升级。
+ *
+ * ★ 比的是哪个字段取决于平台（见 `hasUpdate`）：Android 优先 `versionCode`，
+ *   其余情况全靠版本号字符串。缺了对应的那个就**判不了**。
+ * ★ 判不了时必须走"检查失败"，**不能**当成"有新版本" ——
+ *   后者会让用户每次开 App 都看到一个假的更新提示（iOS 上那个 bug 就是这表象）。
+ */
+export function canCompare(
+  manifest: UpdateManifest,
+  current: CurrentVersion,
+  platform: string,
+): boolean {
+  if (
+    platform === 'android' &&
+    manifest.versionCode > 0 &&
+    current.versionCode > 0
+  ) {
+    return true;
+  }
+  return /^\d+(?:\.\d+)*$/.test(current.version);
+}
+
 /** `2026-10-16T05:46:22Z` -> `2026-10-16`；认不出来就原样返回（可能是空串） */
 export function shortDate(iso: string): string {
   const m = /^(\d{4}-\d{2}-\d{2})/.exec(iso.trim());

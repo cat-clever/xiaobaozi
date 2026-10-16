@@ -8,9 +8,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  canCompare,
   compareVersions,
   formatSize,
   hasUpdate,
+  normalizeCurrentVersion,
   parseManifest,
   shortDate,
 } from '../src/update/manifest';
@@ -69,9 +71,85 @@ describe('有没有新版本', () => {
     expect(
       hasUpdate(manifest!, { version: '0.2.11', versionCode: 0 }, 'ios'),
     ).toBe(false);
-    // 本机版本拿不到（空串）时不该提示更新
+  });
+
+  it('★ 版本号是空串时不能当"有新版本"（iOS 上踩过的坑）', () => {
+    // 症状：装的就是最新版，却永远提示"发现新版本"。
+    // 空串跟任何版本比都是"更旧"，所以不能光靠 hasUpdate ——
+    // 得先用 canCompare 挡住（见下一条）。
     expect(hasUpdate(manifest!, { version: '', versionCode: 0 }, 'ios')).toBe(
       true,
+    );
+    expect(canCompare(manifest!, { version: '', versionCode: 0 }, 'ios')).toBe(
+      false,
+    );
+  });
+});
+
+describe('本机版本信息够不够比', () => {
+  const manifest = parseManifest({
+    version: '0.2.11',
+    versionCode: 15,
+    android: { url: 'https://example.com/a.apk', size: 1 },
+    ios: { url: 'https://example.com/a.ipa', source: 'https://example.com/s.json' },
+  })!;
+
+  it('Android：有 versionCode 就够（定海神针）', () => {
+    expect(canCompare(manifest, { version: '', versionCode: 15 }, 'android')).toBe(
+      true,
+    );
+    // 两边都没有 versionCode 时退化成比版本号
+    expect(canCompare(manifest, { version: '0.2.11', versionCode: 0 }, 'android')).toBe(
+      true,
+    );
+    expect(canCompare(manifest, { version: '', versionCode: 0 }, 'android')).toBe(
+      false,
+    );
+  });
+
+  it('iOS：只认版本号字符串，合格才比', () => {
+    expect(canCompare(manifest, { version: '0.2.11', versionCode: 0 }, 'ios')).toBe(
+      true,
+    );
+    expect(canCompare(manifest, { version: '', versionCode: 15 }, 'ios')).toBe(
+      false,
+    );
+    expect(canCompare(manifest, { version: 'v0.2.11', versionCode: 0 }, 'ios')).toBe(
+      false,
+    );
+  });
+});
+
+describe('收原生的本机版本', () => {
+  it('★ 认 versionName（两端原生报的都是这个名字）', () => {
+    // iOS 原生返回 {versionName, versionCode, packageId} —— 之前只认 version，
+    // 于是 version 成了空串，iOS 按字符串比就永远"有新版本"。
+    expect(
+      normalizeCurrentVersion({
+        versionName: '0.2.11',
+        versionCode: 15,
+        packageId: 'com.xiaobaozi.video',
+      }),
+    ).toEqual({ version: '0.2.11', versionCode: 15 });
+    // Android 原生同样报 versionName
+    expect(normalizeCurrentVersion({ versionName: '0.2.12', versionCode: 16 })).toEqual(
+      { version: '0.2.12', versionCode: 16 },
+    );
+    // 也认 version（万一哪天原生改了键名）
+    expect(normalizeCurrentVersion({ version: '0.2.11' })).toEqual({
+      version: '0.2.11',
+      versionCode: 0,
+    });
+  });
+
+  it('拿不到就如实给空，不编一个', () => {
+    expect(normalizeCurrentVersion(undefined)).toEqual({
+      version: '',
+      versionCode: 0,
+    });
+    expect(normalizeCurrentVersion({})).toEqual({ version: '', versionCode: 0 });
+    expect(normalizeCurrentVersion({ versionName: '   ', versionCode: 'x' })).toEqual(
+      { version: '', versionCode: 0 },
     );
   });
 });

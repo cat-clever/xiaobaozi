@@ -21,7 +21,12 @@ import {
   Platform,
 } from 'react-native';
 
-import { hasUpdate, parseManifest } from './manifest';
+import {
+  canCompare,
+  hasUpdate,
+  normalizeCurrentVersion,
+  parseManifest,
+} from './manifest';
 import type { CurrentVersion, UpdateManifest } from './manifest';
 
 const REPO = 'cat-clever/xiaobaozi';
@@ -42,9 +47,9 @@ export const MANIFEST_URL = `https://github.com/${REPO}/releases/latest/download
 /** SideStore 更新源（iOS 上真正能"升级"的路子） */
 export const SIDESTORE_SOURCE_URL = `https://github.com/${REPO}/releases/latest/download/xiaobaozi.json`;
 
-/** 原生升级模块（目前只有 Android 有实现） */
+/** 原生升级模块报上来的字段名（见 `normalizeCurrentVersion` 的说明） */
 interface UpdaterNative {
-  getVersion(): Promise<CurrentVersion & { packageId?: string }>;
+  getVersion(): Promise<unknown>;
   downloadAndInstall(url: string): Promise<string>;
 }
 
@@ -118,6 +123,9 @@ let versionPromise: Promise<CurrentVersion | null> | null = null;
 /**
  * 问一次原生：这台机器装的是哪一版。
  *
+ * ★★ 原生的字段名是 `versionName`（两端都是），收的时候必须过
+ *   `normalizeCurrentVersion` —— 只认 `version` 的话 iOS 上会拿到空串，
+ *   而空串跟任何版本比都是"更旧"，结果是**永远**提示有新版。详见该函数注释。
  * ★ 不猜、不硬编码 —— 原生模块不在就返回 null，上层据此**不显示**版本号，
  *   而不是编一个出来（编错了比不显示更糟）。
  */
@@ -126,10 +134,7 @@ export function getCurrentVersion(): Promise<CurrentVersion | null> {
     versionPromise = native
       ? native
           .getVersion()
-          .then(v => ({
-            version: String(v?.version ?? ''),
-            versionCode: Number(v?.versionCode ?? 0),
-          }))
+          .then(normalizeCurrentVersion)
           .catch(() => null)
       : Promise.resolve(null);
   }
@@ -188,6 +193,18 @@ export function checkForUpdate(): Promise<void> {
           manifest: null,
           phase: 'error',
           error: '更新清单不可用（解析失败）',
+        });
+        return;
+      }
+
+      // ★ 版本信息不够比就**报"检查失败"**，绝不能糊成"有新版本"：
+      //   那会变成每次开 App 都顶着一个假更新提示（iOS 上踩过，见 canCompare）。
+      if (!canCompare(manifest, current, Platform.OS)) {
+        set({
+          current,
+          manifest: null,
+          phase: 'error',
+          error: '拿不到本机版本号，没法比较',
         });
         return;
       }

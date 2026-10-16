@@ -71,11 +71,22 @@ export function SettingsScreen({ onBack }: Props): React.JSX.Element {
     }
   }, [manifest]);
 
+  /**
+   * 「当前版本」那一行。
+   *
+   * ★ 只显示**版本名**；Android 后面括号里带 `versionCode`。
+   *   iOS 的 `CFBundleVersion` 是构建号、不参与版本比较，
+   *   显示出来会被当成"版本号是 15"，反而看不懂（踩过）。
+   */
   const currentLabel = update.current
-    ? `${update.current.version}${
-        update.current.versionCode ? ` (${update.current.versionCode})` : ''
-      }`
-    : '未知';
+    ? update.current.version
+      ? `${update.current.version}${
+          Platform.OS === 'android' && update.current.versionCode
+            ? ` (${update.current.versionCode})`
+            : ''
+        }`
+      : '读不到'
+    : '读取中…';
 
   return (
     <ScrollView contentContainerStyle={styles.content}>
