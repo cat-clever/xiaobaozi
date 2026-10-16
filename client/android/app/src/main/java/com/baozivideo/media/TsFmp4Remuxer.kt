@@ -19,11 +19,16 @@ import java.io.ByteArrayOutputStream
  *   所以投屏时我们自己先转好：投过去就是**真 fMP4**，接收端判成
  *   FragmentedMp4 -> 整条换封装路径不进入，Android 不崩、Apple 也能播。
  *
- * ★ 故意只支持「恰好这一种」输入，别的宁可抛错回退（回退后仍是原来的表现，
- *   但绝不会给出半成品让播放器卡住）：
- *   - 视频：HEVC（stream_type 0x24）
+ * ★ 支持的输入（别的宁可抛错回退 —— 回退后仍是原来的表现，但绝不会给出
+ *   半成品让播放器卡住）：
+ *   - 视频：**HEVC（stream_type 0x24）或 H.264（0x1B）**
  *   - 音频：AAC ADTS（stream_type 0x0F；LATM 不支持）
  *   - 无加密、无 EXT-X-BYTERANGE、无 EXT-X-DISCONTINUITY
+ *
+ * ★★ 为什么后来要加 H.264（2026-10-16）：投屏到 ADisplay 时，它按分片后缀判
+ *   封装格式 —— `.ts` 就走它自己的换封装，而它那份只认 HEVC，遇到 H.264 抛异常。
+ *   而我们的源1 主线路正是 **H.264-TS**。既然投过去的东西我们说了算，干脆自己
+ *   转成 fMP4：接收端判 FragmentedMp4，两条换封装路都不走，直接交给播放器。
  *
  * 用法（媒体服务里，一个流一个实例，跨分片保留时间轴原点）：
  *   val r = TsFmp4Remuxer()
@@ -50,6 +55,16 @@ class TsFmp4Remuxer {
 
     /** 一条轨道跨分片保留的信息 */
     private class Track(val id: Long, val timescale: Long)
+
+    /**
+     * 视频编码。两条路在**每一处**都要分开处理：
+     *   NAL 头长度（HEVC 2 字节 / H.264 1 字节）、关键帧判定、参数集编号、
+     *   SPS 语法、初始化段的 `hvcC` vs `avcC`。
+     */
+    private enum class Codec { Hevc, Avc }
+
+    /** 由 `demux` 从 PMT 定下来（整条流一致） */
+    private var codec: Codec = Codec.Hevc
 
     private class VideoParams(
         val chromaFormat: Int,
@@ -272,9 +287,12 @@ class TsFmp4Remuxer {
         }
 
         if (videoPid < 0) throw RemuxException("这条流里没有视频轨")
-        if (videoType != 0x24) {
-            throw RemuxException(
-                "视频编码不支持转封装：stream_type=0x%02X（只支持 HEVC 0x24）".format(videoType),
+        when (videoType) {
+            0x24 -> codec = Codec.Hevc
+            0x1B -> codec = Codec.Avc
+            else -> throw RemuxException(
+                "视频编码不支持转封装：stream_type=0x%02X（只支持 HEVC 0x24 / H.264 0x1B）"
+                    .format(videoType),
             )
         }
         if (audioPid < 0) throw RemuxException("这条流里没有音频轨")
@@ -387,27 +405,85 @@ class TsFmp4Remuxer {
         return if (end <= 3) null else carry.copyOfRange(3, end)
     }
 
+    /**
+     * NAL 类型。
+     *
+     * ★ 两种编码的**头长度不一样**，这是最容易搞错的一处：
+     *   - HEVC：2 字节头，`type = (b0 >> 1) & 0x3F`
+     *   - H.264：1 字节头，`type = b0 & 0x1F`
+     */
     private fun nalType(nal: ByteArray): Int {
+        if (codec == Codec.Avc) {
+            if (nal.isEmpty()) return -1
+            return nal[0].toInt() and 0x1F
+        }
         if (nal.size < 2) return -1
         return (nal[0].toInt() shr 1) and 0x3F
     }
 
-    private fun isVcl(type: Int): Boolean = type in 0..31
+    /** NAL 头占几个字节（决定 BitReader 跳过多少） */
+    private fun nalHeaderBytes(): Int = if (codec == Codec.Avc) 1 else 2
 
-    private fun isIrap(type: Int): Boolean = type in 16..23
+    /**
+     * 是不是 AUD（接入单元分隔符）—— 一个 AU 的明确边界。
+     *
+     * ★ 编号两套：HEVC 是 35，**H.264 是 9**。认错的话 AU 切分就乱了。
+     */
+    private fun isAud(type: Int): Boolean = if (codec == Codec.Avc) type == 9 else type == 35
 
-    /** slice 头第一个 bit = first_slice_segment_in_pic_flag */
+    /**
+     * 这个 NAL 是不是"压缩切片"（VCL）。
+     *
+     * ★ 两种编码的编号区间完全不同，不能共用一套判断：
+     *   - HEVC：0..31
+     *   - H.264：1..5（1 非 IDR 片、2-4 分区、5 IDR 片）
+     */
+    private fun isVcl(type: Int): Boolean =
+        if (codec == Codec.Avc) type in 1..5 else type in 0..31
+
+    /**
+     * 这个切片是不是**关键帧**（IRAP / IDR）。
+     *
+     *   - HEVC：16..23（BLA/IDR/CRA）
+     *   - H.264：**只有 5 是 IDR** —— 1-4 都是非关键帧
+     */
+    private fun isIrap(type: Int): Boolean =
+        if (codec == Codec.Avc) type == 5 else type in 16..23
+
+    /**
+     * 这个切片是不是**新图像的起点**。
+     *
+     *   - HEVC：`first_slice_segment_in_pic_flag`（1 bit）
+     *   - H.264：`first_mb_in_slice`（ue）—— **等于 0 才是新图像**
+     */
     private fun startsNewPicture(nal: ByteArray): Boolean {
         if (nal.size < 3) return false
-        val reader = BitReader(nal, 2)
+        val reader = BitReader(nal, nalHeaderBytes())
         return try {
-            reader.readFlag()
+            if (codec == Codec.Avc) reader.readUE() == 0L else reader.readFlag()
         } catch (_: RemuxException) {
             false
         }
     }
 
+    /**
+     * 记下参数集。
+     *
+     * ★ NAL 编号两套：
+     *   - HEVC：32 VPS / 33 SPS / 34 PPS
+     *   - H.264：**7 SPS / 8 PPS**（没有 VPS）
+     */
     private fun noteParameterSets(nal: ByteArray, type: Int) {
+        if (codec == Codec.Avc) {
+            when (type) {
+                7 -> {
+                    if (!containsBytes(spsNals, nal)) spsNals.add(nal)
+                    if (!hasVideoSize && spsNals.isNotEmpty()) parseSps(spsNals[0])
+                }
+                8 -> if (!containsBytes(ppsNals, nal)) ppsNals.add(nal)
+            }
+            return
+        }
         when (type) {
             32 -> if (!containsBytes(vpsNals, nal)) vpsNals.add(nal)
             33 -> {
@@ -465,7 +541,7 @@ class TsFmp4Remuxer {
                 auDts = pesDts ?: pesPts
             }
 
-            if (type == 35) { // AUD：一个 AU 的明确分界
+            if (isAud(type)) { // AUD：一个 AU 的明确分界
                 if (hasVcl()) {
                     flushAu()
                     auPts = pesPts ?: pesDts
@@ -595,6 +671,10 @@ class TsFmp4Remuxer {
     // ---------------------------------------------------------------- SPS 解析（宽高 / 色度 / 位深 / PTL）
 
     private fun parseSps(nal: ByteArray) {
+        if (codec == Codec.Avc) {
+            parseSpsAvc(nal)
+            return
+        }
         val reader = BitReader(nal, 2)
         try {
             reader.readBits(4) // video_parameter_set_id
@@ -664,14 +744,108 @@ class TsFmp4Remuxer {
         }
     }
 
+    /**
+     * H.264 的 SPS 解析（只取宽高与裁剪，够造 `avc1` 用）。
+     *
+     * ★ 语法跟 HEVC 完全是两套，别想着复用：HEVC 那边开头是
+     *   `sps_video_parameter_set_id` + profile_tier_level，这边是
+     *   `profile_idc` / constraint flags / `level_idc` 三个字节起头。
+     *
+     * ★ 高 profile（100/110/122/…）多出一整段色度/位深/缩放矩阵字段，
+     *   漏读一个 ue 后面全部错位 —— 所以必须先按 `profile_idc` 分流。
+     */
+    private fun parseSpsAvc(nal: ByteArray) {
+        // H.264 的 NAL 头是 1 字节
+        val reader = BitReader(nal, 1)
+        try {
+            val profileIdc = reader.readBits(8).toInt()
+            reader.readBits(8) // constraint_set0..5 + reserved
+            reader.readBits(8) // level_idc
+            reader.readUE() // seq_parameter_set_id
+
+            var chromaFormatIdc = 1
+            if (profileIdc in HIGH_PROFILES) {
+                chromaFormatIdc = reader.readUE().toInt()
+                if (chromaFormatIdc == 3) reader.readFlag() // separate_colour_plane_flag
+                reader.readUE() // bit_depth_luma_minus8
+                reader.readUE() // bit_depth_chroma_minus8
+                reader.readFlag() // qpprime_y_zero_transform_bypass_flag
+                if (reader.readFlag()) { // seq_scaling_matrix_present_flag
+                    val count = if (chromaFormatIdc != 3) 8 else 12
+                    for (n in 0 until count) {
+                        if (reader.readFlag()) skipScalingList(reader, if (n < 6) 16 else 64)
+                    }
+                }
+            }
+
+            reader.readUE() // log2_max_frame_num_minus4
+            when (reader.readUE().toInt()) { // pic_order_cnt_type
+                0 -> reader.readUE() // log2_max_pic_order_cnt_lsb_minus4
+                1 -> {
+                    reader.readFlag() // delta_pic_order_always_zero_flag
+                    reader.readSE() // offset_for_non_ref_pic
+                    reader.readSE() // offset_for_top_to_bottom_field
+                    val cycle = reader.readUE().toInt()
+                    for (n in 0 until cycle) reader.readSE()
+                }
+            }
+            reader.readUE() // max_num_ref_frames
+            reader.readFlag() // gaps_in_frame_num_value_allowed_flag
+
+            val widthMbs = reader.readUE().toInt() + 1
+            val heightMapUnits = reader.readUE().toInt() + 1
+            val frameMbsOnly = reader.readFlag()
+            if (!frameMbsOnly) reader.readFlag() // mb_adaptive_frame_field_flag
+            reader.readFlag() // direct_8x8_inference_flag
+
+            var cropLeft = 0
+            var cropRight = 0
+            var cropTop = 0
+            var cropBottom = 0
+            if (reader.readFlag()) { // frame_cropping_flag
+                cropLeft = reader.readUE().toInt()
+                cropRight = reader.readUE().toInt()
+                cropTop = reader.readUE().toInt()
+                cropBottom = reader.readUE().toInt()
+            }
+
+            // 裁剪单位由色度格式与帧/场编码决定（H.264 8.3.2.2 那套）
+            val subWidthC = if (chromaFormatIdc == 1 || chromaFormatIdc == 2) 2 else 1
+            val subHeightC = if (chromaFormatIdc == 1) 2 else 1
+            val frameHeightFactor = if (frameMbsOnly) 1 else 2
+            val cropUnitX = if (chromaFormatIdc == 0) 1 else subWidthC
+            val cropUnitY = if (chromaFormatIdc == 0) frameHeightFactor else subHeightC * frameHeightFactor
+
+            val width = widthMbs * 16 - (cropLeft + cropRight) * cropUnitX
+            val height = frameHeightFactor * heightMapUnits * 16 - (cropTop + cropBottom) * cropUnitY
+
+            videoWidth = maxOf(1, width)
+            videoHeight = maxOf(1, height)
+            hasVideoSize = true
+        } catch (_: RemuxException) {
+            // 读不全就当没读到，上层会因为没有参数集而回退
+        }
+    }
+
+    /** 跳过一段 scaling list（H.264 7.3.2.1.1.1）—— 只要位对齐，值本身用不上 */
+    private fun skipScalingList(reader: BitReader, size: Int) {
+        var lastScale = 8
+        var nextScale = 8
+        for (n in 0 until size) {
+            if (nextScale != 0) {
+                val delta = reader.readSE().toInt()
+                nextScale = (lastScale + delta + 256) % 256
+            }
+            if (nextScale != 0) lastScale = nextScale
+        }
+    }
+
     // ---------------------------------------------------------------- init 段
 
     private fun buildInitSegment(): ByteArray {
-        if (vpsNals.isEmpty() || spsNals.isEmpty() || ppsNals.isEmpty() || !hasVideoSize) {
+        if (spsNals.isEmpty() || ppsNals.isEmpty() || !hasVideoSize) {
             throw RemuxException("TS 结构异常：参数集 / 音频配置不齐，造不出 init")
         }
-        val params = videoParams
-            ?: throw RemuxException("TS 结构异常：参数集 / 音频配置不齐，造不出 init")
         val asc = audioAsc
             ?: throw RemuxException("TS 结构异常：参数集 / 音频配置不齐，造不出 init")
         val vTrack = videoTrack
@@ -679,19 +853,35 @@ class TsFmp4Remuxer {
         val aTrack = audioTrack
             ?: throw RemuxException("TS 结构异常：参数集 / 音频配置不齐，造不出 init")
 
-        val hvcC = buildHvcC(vpsNals, spsNals, ppsNals, params)
+        // ★ 两条路的 sample entry 不同：
+        //   HEVC -> hvc1 + hvcC（还要 VPS，缺一不可）
+        //   H.264 -> avc1 + avcC（**没有 VPS**）
+        val videoBrand: String
+        val sampleEntry: ByteArray
+        if (codec == Codec.Avc) {
+            videoBrand = "avc1"
+            sampleEntry = avc1Entry(videoWidth, videoHeight, buildAvcC(spsNals, ppsNals))
+        } else {
+            if (vpsNals.isEmpty()) {
+                throw RemuxException("TS 结构异常：参数集 / 音频配置不齐，造不出 init")
+            }
+            val params = videoParams
+                ?: throw RemuxException("TS 结构异常：参数集 / 音频配置不齐，造不出 init")
+            videoBrand = "hvc1"
+            sampleEntry = hvc1Entry(videoWidth, videoHeight, buildHvcC(vpsNals, spsNals, ppsNals, params))
+        }
 
         val ftypPayload = ByteArrayOutputStream()
         ftypPayload.write("isom".toByteArray(Charsets.US_ASCII))
         ftypPayload.write(uint32(512))
-        for (brand in listOf("isom", "iso5", "iso6", "mp41", "hvc1")) {
+        for (brand in listOf("isom", "iso5", "iso6", "mp41", videoBrand)) {
             ftypPayload.write(brand.toByteArray(Charsets.US_ASCII))
         }
         val ftyp = box("ftyp", ftypPayload.toByteArray())
 
         val moovBody = ByteArrayOutputStream()
         moovBody.write(mvhd(3))
-        moovBody.write(videoTrak(videoWidth, videoHeight, hvcC, vTrack))
+        moovBody.write(videoTrak(sampleEntry, vTrack))
         moovBody.write(audioTrak(asc, aTrack))
         moovBody.write(mvex(listOf(vTrack, aTrack)))
         val moov = box("moov", moovBody.toByteArray())
@@ -700,6 +890,34 @@ class TsFmp4Remuxer {
         out.write(ftyp)
         out.write(moov)
         return out.toByteArray()
+    }
+
+    /**
+     * `avcC`（AVCDecoderConfigurationRecord，ISO/IEC 14496-15 5.3.3.1）。
+     *
+     * ★ 头三个字节**直接从 SPS 里抄**（SPS 的前 4 字节是 NAL 头 + profile +
+     *   constraint flags + level）—— 不用自己解析 profile/level。
+     */
+    private fun buildAvcC(sps: List<ByteArray>, pps: List<ByteArray>): ByteArray {
+        val first = sps[0]
+        if (first.size < 4) throw RemuxException("TS 结构异常：SPS 太短，造不出 avcC")
+        val payload = ByteArrayOutputStream()
+        payload.write(1) // configurationVersion
+        payload.write(first[1].toInt() and 0xFF) // AVCProfileIndication
+        payload.write(first[2].toInt() and 0xFF) // profile_compatibility
+        payload.write(first[3].toInt() and 0xFF) // AVCLevelIndication
+        payload.write(0xFF or 0x03) // lengthSizeMinusOne = 3（4 字节长度前缀，与样本组装一致）
+        payload.write(0xE0 or minOf(31, sps.size)) // numOfSequenceParameterSets
+        for (item in sps) {
+            payload.write(uint16(item.size))
+            payload.write(item, 0, item.size)
+        }
+        payload.write(minOf(255, pps.size)) // numOfPictureParameterSets
+        for (item in pps) {
+            payload.write(uint16(item.size))
+            payload.write(item, 0, item.size)
+        }
+        return box("avcC", payload.toByteArray())
     }
 
     private fun mvex(tracks: List<Track>): ByteArray {
@@ -718,13 +936,13 @@ class TsFmp4Remuxer {
         return box("mvex", payload.toByteArray())
     }
 
-    private fun videoTrak(width: Int, height: Int, hvcC: ByteArray, track: Track): ByteArray {
-        val tkhd = fullBox("tkhd", 0, 0x7, tkhdPayload(track.id, width, height))
+    private fun videoTrak(sampleEntry: ByteArray, track: Track): ByteArray {
+        val tkhd = fullBox("tkhd", 0, 0x7, tkhdPayload(track.id, videoWidth, videoHeight))
         val mdhd = mdhdBox(track.timescale)
         val minfBody = ByteArrayOutputStream()
         minfBody.write(fullBox("vmhd", 0, 1, uint16(0) + uint16(0) + uint16(0) + uint16(0)))
         minfBody.write(dinfBox())
-        minfBody.write(stblBox(hvc1Entry(width, height, hvcC)))
+        minfBody.write(stblBox(sampleEntry))
         val minf = box("minf", minfBody.toByteArray())
 
         val mdiaBody = ByteArrayOutputStream()
@@ -1053,6 +1271,32 @@ class TsFmp4Remuxer {
         return box("mp4a", payload.toByteArray())
     }
 
+    /**
+     * `avc1` 样本条目（VisualSampleEntry）。字段布局跟 `hvc1` **完全一样**，
+     * 只是盒名不同、末尾挂的是 `avcC` 而不是 `hvcC`。
+     */
+    private fun avc1Entry(width: Int, height: Int, avcC: ByteArray): ByteArray {
+        val payload = ByteArrayOutputStream()
+        payload.write(ByteArray(6)) // reserved
+        payload.write(uint16(1)) // data_reference_index
+        payload.write(uint16(0)) // pre_defined
+        payload.write(uint16(0)) // reserved
+        payload.write(uint32(0)) // pre_defined[3]
+        payload.write(uint32(0))
+        payload.write(uint32(0))
+        payload.write(uint16(width))
+        payload.write(uint16(height))
+        payload.write(uint32(0x00480000)) // horizresolution 72dpi
+        payload.write(uint32(0x00480000)) // vertresolution
+        payload.write(uint32(0)) // reserved
+        payload.write(uint16(1)) // frame_count
+        payload.write(ByteArray(32)) // compressorname
+        payload.write(uint16(0x0018)) // depth
+        payload.write(uint16(0xFFFF)) // pre_defined = -1
+        payload.write(avcC)
+        return box("avc1", payload.toByteArray())
+    }
+
     private fun buildHvcC(vps: List<ByteArray>, sps: List<ByteArray>, pps: List<ByteArray>, params: VideoParams): ByteArray {
         val payload = ByteArrayOutputStream()
         payload.write(1) // configurationVersion
@@ -1167,6 +1411,16 @@ class TsFmp4Remuxer {
             else -> false
         }
 
+        /**
+         * H.264 里"高 profile"的那一批（ITU-T H.264 表 A-1）。
+         *
+         * ★ 它们的 SPS 多出 chroma_format_idc / 位深 / 缩放矩阵一整段 ——
+         *   不按这个分流的话，后面的位读全错位。
+         */
+        private val HIGH_PROFILES = intArrayOf(
+            100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135,
+        )
+
         /** ADTS 采样率表（ISO/IEC 13818-7） */
         private val SAMPLE_RATES = intArrayOf(
             96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050,
@@ -1232,6 +1486,12 @@ private class BitReader(data: ByteArray, skipping: Int) {
             throw TsFmp4Remuxer.RemuxException("TS 结构异常：SPS 读越界")
         }
         bitIndex += count
+    }
+
+    /** 有符号指数哥伦布（H.264 的 offset_for_* 那几个字段要用） */
+    fun readSE(): Long {
+        val ue = readUE()
+        return if (ue and 1L == 1L) (ue + 1) / 2 else -((ue + 1) / 2)
     }
 
     fun readUE(): Long {

@@ -217,8 +217,8 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
      * ★ 必须在**播放器取播放列表之前**调：`#EXT-X-MAP` 得写在播放列表里，
      *   而播放列表是播放器第一件事就去取的（JS 侧见 `MediaSession.prepareRemux`）。
      *
-     * ★ 判定方式就是"转得动就转"：先只取**前 64KB**嗅 PAT/PMT，不是 HEVC 就此
-     *   收手（H.264 才是绝大多数，不为它白下一整片）；是 HEVC 才整片取回来真转。
+     * ★ 判定方式就是"转得动就转"：先只取**前 64KB**嗅 PAT/PMT —— 不是
+     *   HEVC/H.264 的就此收手（不为它白下一整片）；是的话整片取回来真转。
      *   任何一步不成一律回 `{remux:false}`（照常直通）。
      */
     @ReactMethod
@@ -324,14 +324,21 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
             return false
         }
 
-        // ② 嗅编解码 —— 不是 HEVC 就此收手
+        // ② 嗅编解码 —— **HEVC 与 H.264 都转**，别的就此收手
+        //
+        // ★★ 2026-10-16 起 H.264 也转。原先是"不是 HEVC 就不转"，因为转封装
+        //   最初只为 Apple 的 AVPlayer 准备（它不吃 HEVC-in-TS）。但投屏到
+        //   ADisplay 时发现：它按分片后缀判封装，`.ts` 就走它自己的换封装，
+        //   而它那份**只认 HEVC**、遇到 H.264 直接抛异常。既然投过去的东西
+        //   我们说了算，干脆 H.264 也自己转成 fMP4 —— 接收端判 FragmentedMp4，
+        //   两条换封装路都不走，直接交给播放器。
         val streamType = TsFmp4Remuxer.videoStreamType(head.body)
         if (streamType == null) {
             why("前 64KB 里没找到 PMT（${head.body.size} 字节，可能不是 TS）")
             return false
         }
-        if (streamType != 0x24) {
-            why("视频不是 HEVC（stream_type=0x%02X）".format(streamType))
+        if (streamType != 0x24 && streamType != 0x1B) {
+            why("视频编码不支持转封装（stream_type=0x%02X）".format(streamType))
             return false
         }
 
