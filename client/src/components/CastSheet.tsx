@@ -254,6 +254,7 @@ function CastDiagLines({
       <Text style={styles.diag}>
         服务：{stats === null ? '不可用' : stats.running ? '运行中' : '未启动'} · 成功{' '}
         {stats?.ok ?? 0} / 失败 {stats?.fail ?? 0}
+        {stats?.peak === undefined ? '' : ` · 并发峰值 ${stats.peak}`}
       </Text>
       {stats !== null && stats.lastFail !== '' ? (
         <Text style={styles.diag} numberOfLines={1}>

@@ -90,6 +90,10 @@ export interface MediaServerStats {
   lastFail: string;
   /** 服务在不在监听 */
   running: boolean;
+  /** 正在处理的请求数 */
+  active?: number;
+  /** 历史峰值 —— 投屏时如果它顶到上限，说明线程池不够（见 `MAX_WORKERS`） */
+  peak?: number;
 }
 
 const native = (NativeModules as Record<string, unknown>).MediaServer as

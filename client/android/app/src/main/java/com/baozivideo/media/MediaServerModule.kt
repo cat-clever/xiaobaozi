@@ -109,6 +109,10 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
 
     @Volatile
     private var lastFail = ""
+
+    /** 正在处理的请求数 / 历史峰值 —— 投屏时用它看线程池够不够（见 MAX_WORKERS） */
+    private val activeCount = AtomicInteger(0)
+    private val peakCount = AtomicInteger(0)
     private val sessions = ConcurrentHashMap<String, Session>()
     private val pending = ConcurrentHashMap<String, Pending>()
     private val requestSeq = AtomicInteger(0)
@@ -232,6 +236,8 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         map.putInt("fail", failCount.get())
         map.putString("lastFail", lastFail)
         map.putBoolean("running", running.get())
+        map.putInt("active", activeCount.get())
+        map.putInt("peak", peakCount.get())
         promise.resolve(map)
     }
 
@@ -553,6 +559,8 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
     }
 
     private fun handle(client: Socket) {
+        val nowActive = activeCount.incrementAndGet()
+        peakCount.updateAndGet { maxOf(it, nowActive) }
         try {
             client.soTimeout = READ_TIMEOUT_MS
             val out = BufferedOutputStream(client.getOutputStream())
@@ -626,6 +634,7 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         } catch (_: Exception) {
             // 播放器随时会掐连接，这里不值得报错
         } finally {
+            activeCount.decrementAndGet()
             try {
                 client.close()
             } catch (_: Exception) {
@@ -891,7 +900,20 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         private const val ROUTE_PREFIX = "m"
         private const val LOOPBACK = "127.0.0.1"
         private const val BACKLOG = 64
-        private const val MAX_WORKERS = 8
+        /**
+         * 并发处理的上限。
+         *
+         * ★★ 原来是 8，2026-10-16 抬到 32。理由：**投屏时接收端会并发预取**
+         *   （HLS 一次 4-8 份分片、mp4 还会发 Range），而每个 worker 都要
+         *   **等上游 CDN 返回**（源1 主线路还要逐请求现算签名）—— 8 个很容易
+         *   被打满，后面的请求只能排队，接收端等不到就崩。
+         *
+         *   而**本地播放只有 1-2 个并发，永远打不满** —— 这正好解释了
+         *   "本地播放一直正常、一投屏就崩"。
+         *
+         *   线程是阻塞在网络上等 IO 的，不是算力密集，多开代价很小。
+         */
+        private const val MAX_WORKERS = 32
         private const val MAX_HEAD_BYTES = 8192
 
         /** 转封装探测只要前 64KB —— PAT/PMT 就在 TS 最前面 */
