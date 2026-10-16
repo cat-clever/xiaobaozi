@@ -21,6 +21,7 @@ import {
 } from './NativeMediaServer';
 import type { PlaylistRequestEvent } from './NativeMediaServer';
 import { firstMediaSegment, rewritePlaylist } from './playlistRewriter';
+import { localSegmentName } from './segmentNaming';
 import type { SignRule } from './segmentSigner';
 
 /** 交给原生的会话配置（播放列表重写规则留在 TS，不下发） */
@@ -49,18 +50,6 @@ let sequence = 0;
 
 const sessions = new Map<string, MediaSession>();
 
-/** 取播放地址里最后一段当文件名 —— 播放器靠后缀选对管线（.m3u8 / .mp4 / .ts） */
-function basenameOf(url: string): string {
-  try {
-    const path = new URL(url).pathname;
-    const last = path.slice(path.lastIndexOf('/') + 1);
-    if (last && last.includes('.')) return last;
-    return `${last || 'index'}.ts`;
-  } catch {
-    return 'seg.ts';
-  }
-}
-
 export class MediaSession {
   /**
    * 是否走 HEVC-TS -> fMP4 转封装（`prepareRemux()` 探测出来后置位）。
@@ -80,13 +69,22 @@ export class MediaSession {
     /** 本地地址前缀：`http://127.0.0.1:<port>/m/<token>/<sid>` */
     private readonly base: string,
     readonly config: MediaSessionConfig,
+    /**
+     * 这是不是一个**投屏会话**。
+     *
+     * ★ 除了"地址用局域网"，它还决定分片怎么命名 —— 投屏时**不带 `.ts`**，
+     *   免得接收端误判成 HEVC-in-TS 去走本地换封装（那条路在 Android 电视上
+     *   会让接收端崩，见 `segmentNaming.ts` 的 `localSegmentName`）。
+     */
+    private readonly forCast = false,
   ) {}
 
-  /** 播放器靠后缀选管线 —— 转封装会话里分片已经不是 TS 了，报 `.m4s` */
+  /** 分片在本地代理地址里叫什么（后缀规则见 `segmentNaming.ts`） */
   private localNameOf(upstreamUrl: string): string {
-    const name = basenameOf(upstreamUrl);
-    // 只改媒体分片；`.key` / `.m3u8` 之类原样保留
-    return this.remuxing ? name.replace(/\.ts$/i, '.m4s') : name;
+    return localSegmentName(upstreamUrl, {
+      remuxing: this.remuxing,
+      forCast: this.forCast,
+    });
   }
 
   /** 上游地址 -> 本地代理地址 */
@@ -212,7 +210,14 @@ export async function openSession(
   const { port, token, lanHost } = await ensureServer();
   const id = `s${(sequence += 1)}`;
   const host = preferLan && lanHost ? lanHost : '127.0.0.1';
-  const session = new MediaSession(id, `http://${host}:${port}/m/${token}/${id}`, config);
+  // ★ `preferLan` 只在投屏时为 true，这里顺带当作"投屏会话"的标志带下去 ——
+  //   分片命名要用（见 `MediaSession.forCast`），两者本来就是同一件事
+  const session = new MediaSession(
+    id,
+    `http://${host}:${port}/m/${token}/${id}`,
+    config,
+    preferLan,
+  );
 
   // ★ 先登记再通知原生 —— 万一播放列表请求在原生回话前就进来，
   //   `handlePlaylistRequest` 得能查到会话
