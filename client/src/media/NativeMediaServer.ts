@@ -44,8 +44,8 @@ export interface MediaServerNativeModule {
   respondPlaylist(reqId: string, text: string): Promise<void>;
   /**
    * 取一段文本（走同一套头注入 + 逐请求现算签名），结果直接回给 JS。
-   * 探测播放列表要用 —— 探测得先知道第一条分片的地址。**Android 侧没有**
-   * （转封装是 iOS 专属，见 `prepareRemux`），所以声明成可选、调用前先判。
+   * 探测播放列表要用 —— 探测得先知道第一条分片的地址。
+   * 声明成可选是为了容忍老版本原生包，调用前一律先判。
    */
   fetchText?(sid: string, url: string): Promise<string>;
   /**
@@ -56,7 +56,11 @@ export interface MediaServerNativeModule {
    *   写死了 HEVC 的容器必须是 fMP4。Android 的 ExoPlayer 自己能解，不需要。
    *
    * 原生会先取这条分片试转一次，成功就把会话标成转封装模式（顺带锚定
-   * 时间轴原点），失败就照常直通。**Android 侧没有这个方法。**
+   * 时间轴原点），失败就照常直通。
+   *
+   * ★ 双端都有了。Android 原先没有 —— 那边 ExoPlayer 自己能解 HEVC-in-TS，
+   *   本地播放用不着；但**投屏**用得上（接收端只看分片后缀决定要不要自己
+   *   换封装，而它那条路在 Android 电视上会崩，见 `segmentNaming.ts`）。
    */
   prepareRemux?(sid: string, segmentUrl: string): Promise<RemuxVerdict>;
 }

@@ -304,6 +304,18 @@ async function openCastProxy(
       '这台设备现在没有局域网地址（多半是没连 Wi-Fi），电视取不到转发的流。\n请让手机和电视连同一个 Wi-Fi 再试。',
     );
   }
+
+  // ★★ 投屏也要探一次要不要转封装，而且**必须赶在电视取播放列表之前**。
+  //
+  //   接收端（ADisplay）只看播放列表里第一个分片行的后缀决定要不要自己接手
+  //   换封装：`.ts` 就判成 HEVC-in-TS，走它那条"全量下载 + FFmpeg 重封装"的
+  //   路 —— 而那条路只为 Apple 的 AVPlayer 写的，在 Android 电视上跑会崩
+  //   （2026-10-16 真机踩到：281 份分片下去，接收端直接退出）。
+  //
+  //   我们自己先转好，投过去就是**真 fMP4**：接收端判成 FragmentedMp4 ->
+  //   整条换封装路径不进入。Android 不崩、Apple 也能播。
+  //   转不动（H.264 线路、mp4 线路）就照常直通，行为与从前一致。
+  if (format === 'hls') await session.prepareRemux(target);
   return {
     url: session.streamUrl(target, format),
     format,
