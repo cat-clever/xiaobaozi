@@ -110,6 +110,10 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
     @Volatile
     private var lastFail = ""
 
+    /** 最近一次**实际发给客户端**的响应头（诊断用，见 `ProxyResult.headers`） */
+    @Volatile
+    private var lastSentHead = ""
+
     /** 正在处理的请求数 / 历史峰值 —— 投屏时用它看线程池够不够（见 MAX_WORKERS） */
     private val activeCount = AtomicInteger(0)
     private val peakCount = AtomicInteger(0)
@@ -670,6 +674,10 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
                 "取流 $shortName [$rangeTag] ${if (proxied.ok) "ok" else "FAIL"}" +
                     " $sizeNote/${proxied.status}/${proxied.magic}",
             )
+            // ★ 响应头单独留一份：两边"约定对不上"时，唯一能对照的就是它
+            if (!proxied.headers.isEmpty()) {
+                noteRecent("  ↑ ${proxied.headers}")
+            }
         } catch (_: Exception) {
             // 播放器随时会掐连接，这里不值得报错
         } finally {
@@ -718,6 +726,8 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         val magic: String,
         /** 上游声明的 Content-Length（-1 = 没声明）。★ 跟 `bytes` 对比就能看出有没有被截断 */
         val declared: Long,
+        /** 我们**实际发给客户端**的响应头（换行压成 `|`）—— 两边约定对不上时靠它对照 */
+        val headers: String,
     )
 
     private fun proxy(
@@ -757,7 +767,14 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
                 writeHead(out, 200, "OK", "application/vnd.apple.mpegurl", body.size.toLong(), null)
                 out.write(body)
                 out.flush()
-                return ProxyResult(true, 200, body.size.toLong(), "M3U8", body.size.toLong())
+                return ProxyResult(
+                    true,
+                    200,
+                    body.size.toLong(),
+                    "M3U8",
+                    body.size.toLong(),
+                    lastSentHead.replace("\r\n", "|").trimEnd('|'),
+                )
             }
 
             val stream = if (status in 200..299) conn.inputStream else conn.errorStream
@@ -796,9 +813,10 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
                 written,
                 magic,
                 declared,
+                lastSentHead.replace("\r\n", "|").trimEnd('|'),
             )
         } catch (_: Throwable) {
-            return ProxyResult(false, -1, 0, "", -1)
+            return ProxyResult(false, -1, 0, "", -1, "")
         } finally {
             conn.disconnect()
         }
@@ -928,6 +946,7 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         // 每个请求一条连接，简单可靠；播放器会自己重用连接池
         head.append("Connection: close\r\n\r\n")
         out.write(head.toString().toByteArray(Charsets.ISO_8859_1))
+        lastSentHead = head.toString()
     }
 
     /**

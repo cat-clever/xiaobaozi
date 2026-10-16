@@ -115,7 +115,20 @@ export async function fetchServerStats(): Promise<MediaServerStats | null> {
  *   （VOD 还是直播）。对不上"约定"时，这几行就是证据。
  */
 function playlistTagsOf(body: string): string {
-  const wanted = ['#EXT-X-VERSION', '#EXT-X-MAP', '#EXT-X-KEY', '#EXT-X-ENDLIST', '#EXT-X-BYTERANGE'];
+  // ★ 挑的都是**会影响播放器判断**的：
+  //   TARGETDURATION / MEDIA-SEQUENCE 规范上有硬要求，缺了或不对播放器可能
+  //   直接拒收；MAP / KEY / BYTERANGE 决定分片怎么解；ENDLIST 决定 VOD 还是直播。
+  const wanted = [
+    '#EXT-X-VERSION',
+    '#EXT-X-TARGETDURATION',
+    '#EXT-X-MEDIA-SEQUENCE',
+    '#EXT-X-PLAYLIST-TYPE',
+    '#EXT-X-MAP',
+    '#EXT-X-KEY',
+    '#EXT-X-ENDLIST',
+    '#EXT-X-BYTERANGE',
+    '#EXT-X-DISCONTINUITY',
+  ];
   const found: string[] = [];
   for (const line of body.split('\n')) {
     const trimmed = line.trim();
