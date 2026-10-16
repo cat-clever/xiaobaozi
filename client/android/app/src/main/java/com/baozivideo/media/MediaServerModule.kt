@@ -619,7 +619,7 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
             writeHead(
                 out,
                 status,
-                "",
+                reasonOf(status),
                 contentType.ifEmpty { "application/octet-stream" },
                 conn.getHeaderField("Content-Length")?.toLongOrNull(),
                 conn.getHeaderField("Content-Range"),
@@ -740,8 +740,13 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         contentRange: String?,
     ) {
         val head = StringBuilder()
-        head.append("HTTP/1.1 ").append(status)
-        if (reason.isNotEmpty()) head.append(' ').append(reason)
+        // ★★ status-line 里 status-code 之后**必须**有个空格再跟 reason-phrase
+        //   （RFC 7230 3.1.2）。原来是"reason 非空才补空格"，于是透传上游状态码
+        //   （reason 传空串）时写出的是 `HTTP/1.1 206\r\n` —— 少一个空格。
+        //   本地播放（同进程的 ExoPlayer）容忍，所以一直没暴露；但**接收端那边
+        //   是另一个 HTTP 实现**，而 mp4 播放恰恰会发 Range 请求、拿到 206
+        //   （2026-10-16：投屏"播了一秒然后崩"怀疑就是这里）。
+        head.append("HTTP/1.1 ").append(status).append(' ').append(reason)
         head.append("\r\n")
         head.append("Content-Type: ").append(contentType).append("\r\n")
         head.append("Accept-Ranges: bytes\r\n")
@@ -753,6 +758,21 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         // 每个请求一条连接，简单可靠；播放器会自己重用连接池
         head.append("Connection: close\r\n\r\n")
         out.write(head.toString().toByteArray(Charsets.ISO_8859_1))
+    }
+
+    /** 常见状态码的标准 reason-phrase。透传上游时用得上（见 `writeHead`） */
+    private fun reasonOf(status: Int): String = when (status) {
+        200 -> "OK"
+        206 -> "Partial Content"
+        302 -> "Found"
+        400 -> "Bad Request"
+        403 -> "Forbidden"
+        404 -> "Not Found"
+        405 -> "Method Not Allowed"
+        416 -> "Range Not Satisfiable"
+        500 -> "Internal Server Error"
+        502 -> "Bad Gateway"
+        else -> "Unknown"
     }
 
     private fun writeSimple(out: BufferedOutputStream, status: Int, reason: String) {
