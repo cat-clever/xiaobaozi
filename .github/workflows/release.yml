@@ -43,7 +43,10 @@ jobs:
           yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
           echo "--- 预装 platforms ---"; ls "${ANDROID_HOME}/platforms" 2>/dev/null || true
           # 逐个安装：某个包不可用时不拖累其余（sdkmanager 遇到缺失包会整体退出 1）
-          for pkg in "platform-tools" "platforms;android-36" "build-tools;36.0.0"; do
+          # ★ compileSdk 现在是 37 —— Kyant 的 backdrop AAR 的硬门槛
+          #   （`minCompileSdk=37`）。注意 Android 从 37 起改用**次版本号**平台包，
+          #   仓库里没有 `platforms;android-37`，只有 `platforms;android-37.0`。
+          for pkg in "platform-tools" "platforms;android-37.0" "build-tools;37.0.0"; do
             echo "== 安装 $pkg"
             "$SDKMANAGER" "$pkg" || echo "   跳过 $pkg（仓库中不可用）"
           done

@@ -1,11 +1,34 @@
 buildscript {
     ext {
-        buildToolsVersion = "36.0.0"
+        /**
+         * ★★ 三处被 Kyant 的 `backdrop` 顶上去的版本（2026-10-16）。
+         *
+         * 那个库是 Kotlin **2.4.10** 编的（class 元数据 2.4.0），
+         * 2.2.0 的编译器读不了它 —— 一引用就是
+         * "was compiled with an incompatible version of Kotlin"。
+         * 所以整个工程的 Kotlin 必须抬到 2.4.10。
+         *
+         * ★ 注意 Kotlin 版本**本来是 RN 自己钉的**：
+         *   `react-native-gradle-plugin/build.gradle.kts` 里写着
+         *     // The KGP/AGP version is defined by React Native Gradle plugin.
+         *     implementation(libs.kotlin.gradle.plugin)   // = 2.2.0
+         *   下面显式写死版本号，靠 Gradle"取高版本"的规则把它顶掉。
+         *   RN 那个插件只用到 KGP 的两个稳定 API
+         *   （`kotlinExtension.jvmToolchain` 和 `extraProperties`），
+         *   2.2 -> 2.4 没动过它们，所以这条链是安全的 —— 但**只在 CI 上验过**。
+         *
+         * ★ compileSdk 37 是那个 AAR 的硬门槛
+         *   （`META-INF/.../aar-metadata.properties` 里 `minCompileSdk=37`）。
+         *   AGP 9.2.1 的 DSL 支持次版本号 SDK（`compileSdkRelease(apiLevel, minor)`），
+         *   对应的平台包是 `platforms;android-37.0`（见 release.yml）。
+         *   `targetSdkVersion` **不动** —— 它跟编译门槛是两回事。
+         */
+        buildToolsVersion = "37.0.0"
         minSdkVersion = 24
-        compileSdkVersion = 36
+        compileSdkVersion = 37
         targetSdkVersion = 36
         ndkVersion = "27.1.12297006"
-        kotlinVersion = "2.2.0"
+        kotlinVersion = "2.4.10"
     }
     repositories {
         google()
@@ -14,7 +37,10 @@ buildscript {
     dependencies {
         classpath("com.android.tools.build:gradle")
         classpath("com.facebook.react:react-native-gradle-plugin")
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
+        // ★ 显式版本：把 RN 钉的 2.2.0 顶掉（见上面 ext 里的说明）
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.10")
+        // Compose 编译器插件（Kotlin 2.x 起它跟 Kotlin 同版本发布）
+        classpath("org.jetbrains.kotlin:compose-compiler-gradle-plugin:2.4.10")
     }
 }
 

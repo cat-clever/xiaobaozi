@@ -1,5 +1,9 @@
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
+// ★ Compose 编译器插件。Kotlin 2.x 起它**必须显式挂**（以前内置在 KGP 里，
+//   现在拆出来单独发版、跟 Kotlin 同号）。只有 API 33+ 那条路用到 Compose
+//   （见 `glass/kyant/`），但编译器插件是模块级的，躲不开。
+apply plugin: "org.jetbrains.kotlin.plugin.compose"
 apply plugin: "com.facebook.react"
 
 /**
@@ -121,6 +125,11 @@ android {
             }
         }
     }
+    buildFeatures {
+        // ★ 只用到 `ComposeView` + 几个 `Modifier`，但必须开 ——
+        //   不开的话 `@Composable` 编不过。见 `glass/kyant/KyantGlass.kt`。
+        compose = true
+    }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
@@ -137,6 +146,18 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+
+    // ★★ Kyant 的液态玻璃材质库（`Kyant0/AndroidLiquidGlass`，Apache-2.0）。
+    //
+    //   它只提供**材质**，不提供组件（作者在 README 里写明了），所以
+    //   Tab 栏的排版 / 动画 / 手势仍旧留在 RN，这里只换"玻璃怎么画"。
+    //   见 `glass/kyant/KyantGlass.kt`。
+    //
+    //   ★ 它会顺带把 `org.jetbrains.compose.*`（Android 侧重定向到
+    //     `androidx.compose.*`）和 `io.github.kyant0:shapes` 拉进来，
+    //     所以这里不用再单独声明 Compose 依赖。
+    //   ★ 它的 AAR 要求 `compileSdk >= 37`，见根 `build.gradle` 的说明。
+    implementation("io.github.kyant0:backdrop:2.0.1")
 
     // ★ 端内升级要把下载好的 APK 交给系统安装器，必须走 FileProvider
     //   （Android 7 起 file:// 会抛 FileUriExposedException），

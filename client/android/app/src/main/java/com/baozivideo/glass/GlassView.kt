@@ -46,9 +46,9 @@ import kotlin.math.min
  *   原来的渐变近似 —— 玻璃再好看也不能把 App 搞崩。
  * ★ 触摸行为一点没变：`isClickable = false`，玻璃只画不接。
  */
-class GlassView(context: Context) : View(context) {
+class GlassView(context: Context) : View(context), GlassSurface {
 
-  var cornerRadius: Float = 0f
+  override var cornerRadius: Float = 0f
     set(value) {
       field = value
       rebuild()
@@ -56,7 +56,7 @@ class GlassView(context: Context) : View(context) {
     }
 
   /** "dark" / "light" */
-  var glassStyle: String = "dark"
+  override var glassStyle: String = "dark"
     set(value) {
       field = value
       rebuild()
