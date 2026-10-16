@@ -289,6 +289,12 @@ function CastDiagLines({
           <Text style={styles.diag} numberOfLines={3}>
             标签：{diag.playlistTags}
           </Text>
+          <Text style={styles.diag} numberOfLines={2}>
+            {diag.whichList} {diag.listUrl} · {diag.playlistBytes} 字节
+          </Text>
+          <Text style={styles.diag} numberOfLines={4}>
+            内容：{diag.playlistHead}
+          </Text>
         </>
       )}
     </>

@@ -74,6 +74,14 @@ export interface CastPlaylistDiag {
    *   对不上的时候光看"重写成功"没用，得看到正文（2026-10-16）。
    */
   playlistTags: string;
+  /** 我们实际发出去的播放列表的**头几行**（含第一条分片行）—— 看结构对不对 */
+  playlistHead: string;
+  /** 这份播放列表有多少字节 */
+  playlistBytes: number;
+  /** 这次请求的是「顶层」还是「子列表」 */
+  whichList: string;
+  /** 请求的是哪个列表（去掉域名） */
+  listUrl: string;
 }
 
 let castDiag: CastPlaylistDiag | null = null;
@@ -119,6 +127,31 @@ function playlistTagsOf(body: string): string {
     }
   }
   return found.length ? found.join(' | ') : '（没有 KEY / MAP / ENDLIST 等标签）';
+}
+
+/**
+ * 播放列表的**头几行**（最多 6 行，长行截断）。
+ *
+ * ★ "重写成功"只说明我们没抛异常，不代表播放器能解析 —— 它反复重拉播放列表
+ *   却不去取分片时，问题就在这几行里（2026-10-16）。
+ */
+function playlistHeadOf(body: string): string {
+  const lines = body.split('\n').filter((line) => line.trim() !== '');
+  return lines
+    .slice(0, 6)
+    .map((line) => (line.length > 60 ? `${line.slice(0, 60)}…` : line))
+    .join(' ⏎ ');
+}
+
+/** 去掉域名，只留最后两段（诊断显示用） */
+function shortUrlOf(url: string): string {
+  try {
+    const path = new URL(url).pathname;
+    const parts = path.split('/').filter(Boolean);
+    return parts.slice(-2).join('/');
+  } catch {
+    return url.slice(0, 40);
+  }
 }
 
 /** 播放列表里第一条分片的名字（去掉域名，只留最后一段）—— 诊断只关心后缀 */
@@ -301,12 +334,18 @@ function handlePlaylistRequest(event: PlaylistRequestEvent): void {
     }
     // ★ 只有投屏会话才记 —— 本地播放的播放列表请求会把它覆盖掉
     if (session.forCast) {
+      const isTop = !event.url.includes('/index3');
       castDiag = {
         rewritten,
         firstSegment: firstSegmentName(output),
         remuxed: session.usesRemux,
         remuxWhy: session.remuxWhy,
         playlistTags: playlistTagsOf(output),
+        playlistHead: playlistHeadOf(output),
+        playlistBytes: output.length,
+        // ★ 顶层列表与子列表分别记 —— 播放器卡在哪一层要分得清
+        whichList: isTop ? '顶层' : '子列表',
+        listUrl: shortUrlOf(event.url),
       };
     }
   }

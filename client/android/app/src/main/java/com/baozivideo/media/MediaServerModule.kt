@@ -657,9 +657,12 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
                 return
             }
 
-            val ok = proxy(segments[2], target, session, range, out)
-            noteResult(ok, "代理取流失败")
-            noteRecent("取流 $shortName [$rangeTag] ${if (ok) "ok" else "FAIL"}")
+            val proxied = proxy(segments[2], target, session, range, out)
+            noteResult(proxied.ok, "代理取流失败")
+            noteRecent(
+                "取流 $shortName [$rangeTag] ${if (proxied.ok) "ok" else "FAIL"}" +
+                    " ${proxied.bytes}B/${proxied.status}",
+            )
         } catch (_: Exception) {
             // 播放器随时会掐连接，这里不值得报错
         } finally {
@@ -693,13 +696,16 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         return null
     }
 
+    /** 代理结果：状态码 + 实际写出去的字节数（"ok 但正文是空的"最难查） */
+    private class ProxyResult(val ok: Boolean, val status: Int, val bytes: Long)
+
     private fun proxy(
         sid: String,
         target: String,
         session: Session,
         range: String?,
         out: BufferedOutputStream,
-    ): Boolean {
+    ): ProxyResult {
         // ★ 每次请求都现算签名 —— wsSecret 只有 30 秒时效
         val finalUrl = session.sign?.let { signUrl(target, it) } ?: target
         val conn = URL(finalUrl).openConnection() as HttpURLConnection
@@ -730,7 +736,7 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
                 writeHead(out, 200, "OK", "application/vnd.apple.mpegurl", body.size.toLong(), null)
                 out.write(body)
                 out.flush()
-                return true
+                return ProxyResult(true, 200, body.size.toLong())
             }
 
             val stream = if (status in 200..299) conn.inputStream else conn.errorStream
@@ -742,18 +748,20 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
                 conn.getHeaderField("Content-Length")?.toLongOrNull(),
                 conn.getHeaderField("Content-Range"),
             )
+            var written = 0L
             if (stream != null) {
                 val chunk = ByteArray(COPY_BUFFER)
                 while (true) {
                     val read = stream.read(chunk)
                     if (read <= 0) break
                     out.write(chunk, 0, read)
+                    written += read
                 }
             }
             out.flush()
-            return status in 200..299
+            return ProxyResult(status in 200..299, status, written)
         } catch (_: Throwable) {
-            return false
+            return ProxyResult(false, -1, 0)
         } finally {
             conn.disconnect()
         }
