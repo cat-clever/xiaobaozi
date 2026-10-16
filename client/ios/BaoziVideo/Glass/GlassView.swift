@@ -98,10 +98,6 @@ final class GlassView: UIView {
   override init(frame: CGRect) {
     super.init(frame: frame)
     backgroundColor = .clear
-    // ★ 诊断：装上的时候颜色会切到 clear；没装到时就留红色底 —— 截图.
-    if GlassView.glassEffectAvailable {
-      backgroundColor = UIColor.systemRed.withAlphaComponent(0.55)
-    }
     clipsToBounds = true
 
     // 玻璃层垫在最底下；RN 的内容在 GlassBox 那层垫在它上面（兄弟节点）

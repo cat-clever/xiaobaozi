@@ -15,6 +15,7 @@ import {
   Animated,
   BackHandler,
   PanResponder,
+  Platform,
   Pressable,
   StatusBar,
   StyleSheet,
@@ -37,6 +38,10 @@ import { PlayerScreen } from './src/screens/PlayerScreen';
 import { SearchScreen } from './src/screens/SearchScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { ThemeProvider, radius, space, useTheme } from './src/theme';
+import {
+  LiquidGlassView,
+  isLiquidGlassSupported,
+} from '@callstack/liquid-glass';
 import type { Palette } from './src/theme';
 import type { VodItem } from './src/types/schema';
 import { checkForUpdate, useUpdateState } from './src/update/updater';
@@ -85,6 +90,9 @@ function AppShell(): React.JSX.Element {
    *   要退回接近不透明的底保证文字可读（见 `theme/index.ts` 的 bar / barSolid）。
    */
   const glassOn = glass && NATIVE_GLASS_AVAILABLE;
+  const realGlass =
+    Platform.OS === 'ios' && (isLiquidGlassSupported as boolean);
+  const GlassShell = (realGlass ? LiquidGlassView : GlassBox) as React.ComponentType<any>;
   /**
    * 本机拿到的是**真·液态玻璃**（iOS 26+）吗。
    *
@@ -608,10 +616,12 @@ function AppShell(): React.JSX.Element {
                   没有真玻璃时（Android / iOS 26 以下）按钮自己就是 Pressable、
                   命中优先级更高，这里的 onPress 根本不会触发 —— 两边不打架。 */}
               <Pressable onPress={e => pressTabAt(e.nativeEvent.locationX)}>
-                <GlassBox
+                <GlassShell
                   style={styles.tabBar}
                   cornerRadius={radius.pill}
                   interactive
+                  effect="regular"
+                  colorScheme="dark"
                 >
                   {/* 内层胶囊：跟着手指滑动，指到哪跟到哪。
                       ★ 按住的"扩张"分两层：外层整条 1.04（`tabScale`，仅非真玻璃），
@@ -649,7 +659,7 @@ function AppShell(): React.JSX.Element {
                       onLayout={e => handleTabLayout(index, e)}
                     />
                   ))}
-                </GlassBox>
+                </GlassShell>
               </Pressable>
             </Animated.View>
           </View>
