@@ -59,6 +59,12 @@ final class GlassView: UIView {
   /// 等"能渲染了"用的显示心跳（见 `waitForVisibility`）
   private var visibilityLink: CADisplayLink?
 
+  /// ★ 诊断：视图挂上时颜色标记（卸掉就能装挂粗盲态）。
+  ///   init 里把 bg 色标成红色，installGlass 成功后再换成 clear。
+  ///   口感：红色条 = 还没装上（时机/门控问题）。
+  ///         直接 clear/transparant → 安装了但材质没画（host 问题 → 需 Fabric）。
+  ///         real glass → 修好了。
+
   /// 圆角。RN 侧传进来
   @objc var cornerRadius: NSNumber = 22 {
     didSet { applyAppearance() }
@@ -87,9 +93,15 @@ final class GlassView: UIView {
     }
   }
 
+  private var fallbackTimer: Timer?
+
   override init(frame: CGRect) {
     super.init(frame: frame)
     backgroundColor = .clear
+    // ★ 诊断：装上的时候颜色会切到 clear；没装到时就留红色底 —— 截图.
+    if GlassView.glassEffectAvailable {
+      backgroundColor = UIColor.systemRed.withAlphaComponent(0.55)
+    }
     clipsToBounds = true
 
     // 玻璃层垫在最底下；RN 的内容在 GlassBox 那层垫在它上面（兄弟节点）
@@ -137,6 +149,8 @@ final class GlassView: UIView {
     if window == nil {
       // 离开窗口 = 这份层级没了：下次上屏得重新装一遍
       glassInstalled = false
+      fallbackTimer?.invalidate()
+      fallbackTimer = nil
       stopWaitingForVisibility()
     } else {
       // ★ `layoutSubviews` 在"几何没变"的重新上屏下**不会触发**，
@@ -159,22 +173,49 @@ final class GlassView: UIView {
    *      也别在"父级还在淡入"的时候装。
    */
   private var canRenderGlass: Bool {
+    // ★ 仅要求：在 window 里（opacity 门控去掉——suspect 这道门把 legit 安装也卡死）。
     guard window != nil else { return false }
-    var opacity: CGFloat = 1
-    var view: UIView? = self
-    while let current = view {
-      if current.isHidden { return false }
-      opacity *= current.alpha
-      view = current.superview
-    }
-    return opacity > 0.02
+    return true
   }
 
   private func installGlass() {
     guard !glassInstalled else { return }
     glassInstalled = true
+    // 把 BG 切成 clear 了——截图里是 red 时 = 没到 installed；
+    // clear 时 = 已装（下面 2s 的 blur fallback 也保证不会 perpetually red）。
+    backgroundColor = .clear
     stopWaitingForVisibility()
     reloadGlass()
+    // ★ 2s 时如果装上了 glass 但 rendering 仍然 empty， fallback to blur.
+    armFallbackBlur()
+  }
+
+  private func armFallbackBlur() {
+    fallbackTimer?.invalidate()
+    guard #available(iOS 26.0, *) else { return }
+    fallbackTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
+      guard let self = self else { return }
+      // reloadGlass 重新 ran; check installed vs then condition
+      print("[GlassView] 2s probe: glassInstalled=\(self.glassInstalled) alpha visible=\(self.glassInstalled)")
+    }
+    // actual fallback: no effect remains never-installed → swap to blur
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+      guard let self = self else { return }
+      if self.glassInstalled {
+        // glassAttempted; test whether bar's view has glass assigned then effect null
+        if self.effectView.effect == nil {
+          if #available(iOS 26.0, *) {
+            self.effectView.effect = UIVisualEffect()
+            self.effectView.effect = UIBlurEffect(style: .systemUltraThinMaterialDark)
+          }
+        }
+        return
+      }
+      // never installed → force blur so bar isn't transparent
+      if #available(iOS 26.0, *) { self.effectView.effect = UIBlurEffect(style: .systemUltraThinMaterialDark) }
+      self.glassInstalled = true  // never-wait again
+      self.backgroundColor = .clear
+    }
   }
 
   /**
