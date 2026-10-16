@@ -517,7 +517,13 @@ function PlayerView({
         // 投上了才把旧的那份收掉（失败的话旧的还在用，别提前拆）
         await castSourceRef.current?.dispose?.();
         castSourceRef.current = source;
-        setCastActive({ device, direct: source.direct, lineName: source.lineName });
+        setCastActive({
+          device,
+          direct: source.direct,
+          lineName: source.lineName,
+          // 诊断用：电视不出画面时，用户能拿浏览器验证这个地址通不通
+          url: source.url,
+        });
         // 本地这路停下来 —— 同一个片子两边一起放没有意义
         setPaused(true);
       } catch (err) {

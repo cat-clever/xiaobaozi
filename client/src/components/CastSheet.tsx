@@ -28,6 +28,15 @@ export interface ActiveCast {
   device: CastDevice;
   direct: boolean;
   lineName: string;
+  /**
+   * **实际投给电视的那个地址**。
+   *
+   * ★ 只用来诊断：转发模式下电视取流失败时，界面之外看不到任何东西
+   *   （取流是电视的**出站**请求，电视那侧的日志里不会有记录）。
+   *   把它摆出来，用户能拿电脑浏览器打开验证"手机的服务到底通不通" ——
+   *   通就是电视的问题，不通就是地址/服务的问题（2026-10-16 排查用）。
+   */
+  url: string;
 }
 
 interface Props {
@@ -173,6 +182,17 @@ function CastingPanel({
       {!active.direct ? (
         <Text style={styles.warn}>转发模式：投屏期间请别让手机息屏或退出 App</Text>
       ) : null}
+      {/*
+        ★ 转发模式下把投过去的地址摆出来（诊断用）。
+          电视"收下了但不出画面"时，这是唯一能分清责任的办法：
+          拿电脑浏览器打开这个地址 —— 能下到播放列表说明手机服务可达，
+          问题在电视；打不开说明地址或服务不对。长按可选中复制。
+      */}
+      {!active.direct ? (
+        <Text style={styles.castUrl} selectable numberOfLines={4}>
+          {active.url}
+        </Text>
+      ) : null}
       <View style={styles.castingActions}>
         <Pressable style={styles.action} onPress={onTogglePlay}>
           <Text style={styles.actionText}>{playing ? '暂停' : '播放'}</Text>
@@ -188,13 +208,16 @@ function CastingPanel({
 const makeStyles = (color: Palette) =>
   StyleSheet.create({
     // ★ 这里手写四条边：这个 RN 版本的类型里没有 `absoluteFillObject`
+    // ★ 遮罩压到 0.32：原来 0.45 把正在播的画面整个压灰，
+    //   用户第一眼看到的是"画面变灰了"而不是"弹了个面板"（2026-10-16 反馈）。
+    //   面板自己带了实底与阴影（见下），不靠遮罩来拉开层次。
     scrim: {
       position: 'absolute',
       top: 0,
       left: 0,
       right: 0,
       bottom: 0,
-      backgroundColor: 'rgba(0,0,0,0.45)',
+      backgroundColor: 'rgba(0,0,0,0.32)',
     },
     sheetWrap: { flex: 1, justifyContent: 'flex-end' },
     sheet: {
@@ -205,6 +228,26 @@ const makeStyles = (color: Palette) =>
       paddingBottom: space.xl + space.lg,
       maxHeight: '70%',
       overflow: 'hidden',
+      /**
+       * ★★ 面板**必须自己带底**，不能只靠 `GlassBox`。
+       *
+       *   玻璃层在 Android 上是"把背后的内容抓下来糊一遍再画回来"
+       *   （见 `GlassView.kt`）：它抓到的是**被遮罩压暗后的播放页**，
+       *   糊完再画上去跟周围几乎同色；抓取失败走兜底时更糟 ——
+       *   兜底只画一层很淡的白渐变，连深色衬底都不画，面板整个是透明的。
+       *   两种情况下用户看到的都是"看不出面板边界"（2026-10-16 反馈）。
+       *
+       *   垫一层接近不透明的底就都解决了：玻璃正常时透出这层底、抓取失败时
+       *   也有实底兜着。用 `barSolid`（Tab 栏"没有玻璃兜着时"的那档实底）
+       *   而不是 `surface` —— 后者只有 0.06 的白，等于没垫。
+       */
+      backgroundColor: color.barSolid,
+      // 浮起来：跟底下那块播放详情拉开层次
+      elevation: 16,
+      shadowColor: '#000',
+      shadowOpacity: 0.45,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: -6 },
     },
     header: {
       flexDirection: 'row',
@@ -255,6 +298,12 @@ const makeStyles = (color: Palette) =>
     castingTitle: { color: color.text, fontSize: 15, fontWeight: '600' },
     castingMeta: { color: color.textDim, fontSize: 12, marginTop: 3 },
     warn: { color: color.accent, fontSize: 12, marginTop: space.sm, lineHeight: 18 },
+    castUrl: {
+      color: color.textFaint,
+      fontSize: 10,
+      lineHeight: 15,
+      marginTop: space.sm,
+    },
     castingActions: { flexDirection: 'row', gap: space.sm, marginTop: space.md },
     action: {
       flex: 1,
