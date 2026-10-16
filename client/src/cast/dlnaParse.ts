@@ -25,11 +25,30 @@ const GUESSED_PATHS = [
   '/AVTransport/ctrl',
 ];
 
+/**
+ * 控制地址候选表**末尾**再挂的兜底路径。
+ *
+ * ★ 前面那三种基准全拼错时才轮到它们（设备把 `controlURL` 写成怪相对路径、
+ *   `URLBase` 又乱，怎么拼都不对）。反正只在 404 之后才试，成本就是几次
+ *   局域网内的 404 往返。`/control` 排第一 —— 2026-10-16 那台接收端用的就是它。
+ */
+const FALLBACK_PATHS = ['/control', ...GUESSED_PATHS];
+
 export interface ParsedDescription {
   udn: string;
   friendlyName: string;
   modelName: string;
+  /** 首选控制地址（= `controlUrls[0]`） */
   controlUrl: string;
+  /**
+   * 控制地址的**候选表**，首选在前。
+   *
+   * ★ 为什么要好几个：`URLBase` 这东西各家写法不一，同一个描述用不同的基准
+   *   解析出来的控制路径可能不一样，而我们**没法提前知道哪台设备认哪个**。
+   *   投屏时按顺序试，哪个不是 404 就用哪个（见 `dlna.ts` 的 `soap`）。
+   *   用户 2026-10-16 的硬要求是「最宽松校验」，这里是同一条思路。
+   */
+  controlUrls: string[];
   serviceType: string;
 }
 
@@ -43,21 +62,22 @@ export interface ParsedDescription {
  * ★ `serviceType` 空着或乱写、但控制路径里写着 AVTransport 的，也认。
  */
 export function parseDescription(xml: string, descriptionUrl: string): ParsedDescription | null {
-  const base = tagText(xml, 'URLBase') || descriptionUrl;
+  const rawBase = tagText(xml, 'URLBase');
+  const base = normalizeBase(rawBase, descriptionUrl);
 
-  let controlUrl = '';
+  let controlUrls: string[] = [];
   let serviceType = '';
   for (const block of allBlocks(xml, 'service')) {
     const type = tagText(block, 'serviceType');
     const control = tagText(block, 'controlURL');
     if (!control) continue;
     if (type.toLowerCase().includes(AVTRANSPORT)) {
-      controlUrl = resolveUrl(base, control);
+      controlUrls = controlCandidates(base, rawBase, descriptionUrl, control);
       serviceType = type;
       break;
     }
-    if (!controlUrl && control.toLowerCase().includes(AVTRANSPORT)) {
-      controlUrl = resolveUrl(base, control);
+    if (!controlUrls.length && control.toLowerCase().includes(AVTRANSPORT)) {
+      controlUrls = controlCandidates(base, rawBase, descriptionUrl, control);
       serviceType = type || 'urn:schemas-upnp-org:service:AVTransport:1';
     }
   }
@@ -66,16 +86,49 @@ export function parseDescription(xml: string, descriptionUrl: string): ParsedDes
   //   不设这道门的话，`LOCATION` 指到别的东西（一个 404 页、一段 JSON）时
   //   也会猜出一个地址 —— 列表里就多一台**点不动的幽灵设备**，
   //   用户点了才发现投不了。宁可少一台，也不要一台假的。
-  if (!controlUrl && LOOKS_LIKE_DESCRIPTION.test(xml)) controlUrl = guessControlUrl(base);
-  if (!controlUrl) return null;
+  if (!controlUrls.length && LOOKS_LIKE_DESCRIPTION.test(xml)) {
+    const guessed = guessControlUrl(base);
+    if (guessed) controlUrls = [guessed];
+  }
+  if (!controlUrls.length) return null;
 
   return {
     udn: tagText(xml, 'UDN'),
     friendlyName: tagText(xml, 'friendlyName'),
     modelName: tagText(xml, 'modelName') || tagText(xml, 'manufacturer'),
-    controlUrl,
+    controlUrl: controlUrls[0],
+    controlUrls,
     serviceType: serviceType || 'urn:schemas-upnp-org:service:AVTransport:1',
   };
+}
+
+/**
+ * 控制地址的候选表。
+ *
+ * ★ 三种基准各算一份，去重后按可靠性排序：
+ *   1. **规整过的 `URLBase`** —— 首选（`URLBase` 写成文件名的设备见 `normalizeBase`）
+ *   2. **原样的 `URLBase`** —— 万一规整错了（设备真就想以那个路径为基准）
+ *   3. **描述自己的地址** —— 连 `URLBase` 都没有时的兜底
+ * 投屏时按顺序试，哪个不是 404 就用哪个。
+ */
+export function controlCandidates(
+  base: string,
+  rawBase: string,
+  descriptionUrl: string,
+  control: string,
+): string[] {
+  const out: string[] = [];
+  const push = (url: string) => {
+    if (url && !out.includes(url)) out.push(url);
+  };
+  push(resolveUrl(base, control));
+  if (rawBase.trim()) push(resolveUrl(rawBase.trim(), control));
+  push(resolveUrl(descriptionUrl, control));
+  // ★ 最后挂兜底：上面全不对时，至少还有一次"按惯例猜"的机会。
+  //   只在前面都回了 404 之后才会轮到它们（见 `dlna.ts` 的 `soap`）。
+  const root = rootOf(base) || rootOf(descriptionUrl);
+  if (root) for (const path of FALLBACK_PATHS) push(`${root}${path}`);
+  return out;
 }
 
 /**
@@ -85,6 +138,39 @@ export function parseDescription(xml: string, descriptionUrl: string): ParsedDes
 export function guessControlUrl(base: string): string {
   const root = rootOf(base);
   return root ? `${root}${GUESSED_PATHS[0]}` : '';
+}
+
+/**
+ * 把 `URLBase` 规整成**目录**形式。
+ *
+ * ★★ UPnP 规范里 `URLBase` 该是 `http://host:port/` 这种目录，但实测有设备
+ *   （2026-10-16：接收端 ADisplay）把它写成**自己描述文件的完整地址**
+ *   `http://host:port/description.xml`。拿它当基准解析相对的控制路径，
+ *   就会拼出 `http://host:port/description.xml/control` 这种根本不存在的地址。
+ *
+ *   后果很隐蔽：设备对那个路径回 **404**，而 404 的正文里没有 SOAP Fault，
+ *   `postSoap` 那句"以正文为准"于是把它当成**投屏成功** ——
+ *   用户看到"正在投屏到 X"，电视却一动不动（对照实验：B 站投同一台设备
+ *   用的是 `/control`，一次就成）。
+ *
+ * 所以：路径最后一段看着像文件名（带 `.`）就退到它所在目录。
+ * 拿不准就原样返回 —— 候选表里还留着原样那一份（见 `controlCandidates`）。
+ */
+export function normalizeBase(raw: string, fallback: string): string {
+  const base = raw.trim() || fallback;
+  try {
+    const url = new URL(base);
+    const path = url.pathname;
+    // ★ 先去掉尾斜杠再看最后一段：`.../description.xml/` 这种写法同样要退到
+    //   目录 —— 拿它当 base，`control` 会拼成 `/description.xml/control`。
+    const trimmed = path.endsWith('/') ? path.slice(0, -1) : path;
+    if (!trimmed) return base;
+    const last = trimmed.slice(trimmed.lastIndexOf('/') + 1);
+    if (!last.includes('.')) return base;
+    return `${url.protocol}//${url.host}${trimmed.slice(0, trimmed.lastIndexOf('/') + 1)}`;
+  } catch {
+    return base;
+  }
 }
 
 /** 相对地址 -> 绝对地址。★ 根相对 / 目录相对 / 已经是绝对的，三种都认 */

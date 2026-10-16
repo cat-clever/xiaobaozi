@@ -30,6 +30,14 @@ export interface CastDevice {
    */
   controlUrl?: string;
   /**
+   * DLNA：控制地址的**候选表**（首选在前，见 `dlnaParse` 的 `controlCandidates`）。
+   *
+   * ★ 不同设备对 `URLBase` 的写法差异很大，同一份描述用不同基准解析出来的
+   *   控制路径可能不一样 —— 提前没法知道哪台认哪个，所以投屏时**按顺序试**，
+   *   哪个不是 404 就用哪个（见 `dlna.ts` 的 `soap`）。
+   */
+  controlUrls?: string[];
+  /**
    * DLNA：该设备 `AVTransport` 的 `serviceType`（含版本号，如
    * `urn:schemas-upnp-org:service:AVTransport:1`）。
    * ★ SOAP 的 `SOAPACTION` 头必须跟它**逐字一致** —— 版本号写错有的电视直接拒。

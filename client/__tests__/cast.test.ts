@@ -13,8 +13,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildMetadata,
+  controlCandidates,
   faultOf,
   guessControlUrl,
+  normalizeBase,
   normalizeState,
   parseDescription,
   resolveUrl,
@@ -143,6 +145,47 @@ describe('dlnaParse：设备描述', () => {
     expect(parsed!.controlUrl).toBe('http://10.0.0.5:1234/ctl/avt');
   });
 
+  it('★★ URLBase 写成了描述文件自己的地址 —— 不能拿它当目录用', () => {
+    // 实测 2026-10-16：接收端（ADisplay）的 URLBase 就是自己描述文件的完整地址。
+    // 拿它当基准解析相对控制路径，会拼出 `/description.xml/control` 这种根本
+    // 不存在的地址 —— 设备回 404，而 404 正文里没有 SOAP Fault，
+    // 于是被当成"投屏成功"，用户看到"正在投屏到 X"、电视一动不动。
+    const xml = `<root><URLBase>http://192.168.1.20:49152/description.xml</URLBase>
+      <device><serviceList><service>
+        <serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>
+        <controlURL>control</controlURL>
+      </service></serviceList></device></root>`;
+    const parsed = parseDescription(xml, descriptionUrl);
+    expect(parsed!.controlUrl).toBe('http://192.168.1.20:49152/control');
+  });
+
+  it('★ 同一个 URLBase 带尾斜杠也一样退到目录', () => {
+    const xml = `<root><URLBase>http://192.168.1.20:49152/description.xml/</URLBase>
+      <device><serviceList><service>
+        <serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>
+        <controlURL>control</controlURL>
+      </service></serviceList></device></root>`;
+    expect(parseDescription(xml, descriptionUrl)!.controlUrl).toBe(
+      'http://192.168.1.20:49152/control',
+    );
+  });
+
+  it('★ 候选表：算不准就把几种基准 + 惯例路径都列上', () => {
+    const xml = `<root><URLBase>http://192.168.1.20:49152/description.xml</URLBase>
+      <device><serviceList><service>
+        <serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>
+        <controlURL>control</controlURL>
+      </service></serviceList></device></root>`;
+    const urls = parseDescription(xml, descriptionUrl)!.controlUrls;
+    // 首选是规整后的基准算出来的
+    expect(urls[0]).toBe('http://192.168.1.20:49152/control');
+    // 末尾挂着惯例路径 —— 前面全 404 时还有一次机会
+    expect(urls).toContain('http://192.168.1.20:49152/control');
+    expect(urls.some(u => u.endsWith('/AVTransport/control'))).toBe(true);
+    // 不该有重复
+    expect(new Set(urls).size).toBe(urls.length);
+  });
+
   it('★ 一个 service 都没有 —— 兜底猜常见控制路径（不直接放弃）', () => {
     const xml = '<root><device><friendlyName>怪电视</friendlyName></device></root>';
     const parsed = parseDescription(xml, descriptionUrl);
@@ -172,6 +215,33 @@ describe('dlnaParse：地址解析', () => {
     expect(resolveUrl(base, 'ctl')).toBe('http://10.0.0.5:1234/desc/ctl');
     expect(resolveUrl(base, 'http://other:9/x')).toBe('http://other:9/x');
     expect(resolveUrl(base, '')).toBe('');
+  });
+
+  it('normalizeBase：看着像文件名的最后一段要退到目录', () => {
+    expect(normalizeBase('http://h:1/description.xml', 'http://fb/')).toBe('http://h:1/');
+    expect(normalizeBase('http://h:1/description.xml/', 'http://fb/')).toBe('http://h:1/');
+    expect(normalizeBase('http://h:1/a/b/device.xml', 'http://fb/')).toBe('http://h:1/a/b/');
+    // 已经是目录 / 没有后缀 / 拿不准 —— 一律原样返回
+    expect(normalizeBase('http://h:1/', 'http://fb/')).toBe('http://h:1/');
+    expect(normalizeBase('http://h:1/desc/', 'http://fb/')).toBe('http://h:1/desc/');
+    expect(normalizeBase('http://h:1/upnp/control/AVTransport1', 'http://fb/')).toBe(
+      'http://h:1/upnp/control/AVTransport1',
+    );
+    // 空值退回 fallback —— ★ fallback（描述地址）本身也会被规整：
+    // 它就是 `http://host/description.xml` 这个形式，同样得退到目录
+    expect(normalizeBase('  ', 'http://fb/desc.xml')).toBe('http://fb/');
+  });
+
+  it('controlCandidates：去重 + 兜底路径垫底', () => {
+    const urls = controlCandidates(
+      'http://h:1/',
+      'http://h:1/',
+      'http://h:1/description.xml',
+      '/ctl',
+    );
+    expect(urls[0]).toBe('http://h:1/ctl');
+    expect(new Set(urls).size).toBe(urls.length);
+    expect(urls).toContain('http://h:1/control');
   });
 
   it('rootOf 取 scheme://host:port', () => {

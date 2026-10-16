@@ -104,6 +104,9 @@ export async function describe(hit: SsdpHit): Promise<CastDevice | null> {
     model: parsed.modelName,
     address: hit.address || hostOf(hit.location),
     controlUrl: parsed.controlUrl,
+    // ★ 候选表一起带上：不同基准解析出来的控制路径可能不一样，
+    //   投屏时按顺序试（见 `soap`）
+    controlUrls: parsed.controlUrls,
     serviceType: parsed.serviceType,
   };
 }
@@ -199,27 +202,59 @@ export async function dlnaStatus(device: CastDevice): Promise<CastTransportState
 
 /**
  * 发一次 SOAP 调用，返回响应正文。
- * ★ 失败时**换一种 `SOAPACTION` 写法重试**：规范要带引号，但见过只认不带引号的
- *   老设备。两种都试，成本只是一次请求。
+ *
+ * 两层重试：
+ * 1. **换 `SOAPACTION` 写法** —— 规范要带引号，但见过只认不带引号的老设备；
+ * 2. **换控制地址候选** —— 设备对 `URLBase` 的写法差异会让同一个描述解析出
+ *    不同的控制路径，只有试了才知道哪台认哪个（`controlCandidates` 给的就是
+ *    这个顺序）。★ 只在**上一个地址回了 404** 时才换：404 说明那个路径上
+ *    压根没有服务，而别的错误（Fault / 500）说明地址是对的、是动作本身没成，
+ *    换个地址也一样白搭。
  */
 export async function soap(
   device: CastDevice,
   action: string,
   args: Record<string, string>,
 ): Promise<string> {
-  if (!device.controlUrl) throw new Error('这台设备没有 AVTransport 控制地址');
+  const urls = device.controlUrls?.length ? device.controlUrls : [device.controlUrl ?? ''];
+  if (!urls[0]) throw new Error('这台设备没有 AVTransport 控制地址');
   const serviceType = device.serviceType || DEFAULT_SERVICE;
   const body = buildEnvelope(serviceType, action, args);
 
   let lastError: unknown = null;
-  for (const header of [`"${serviceType}#${action}"`, `${serviceType}#${action}`]) {
-    try {
-      return await postSoap(device.controlUrl, header, body);
-    } catch (err) {
-      lastError = err;
+  for (const url of urls) {
+    let failure: unknown = null;
+    for (const header of [`"${serviceType}#${action}"`, `${serviceType}#${action}`]) {
+      try {
+        return await postSoap(url, header, body);
+      } catch (err) {
+        failure = err;
+        if (isNotFound(err)) break;
+      }
     }
+    lastError = failure;
+    if (failure && !isNotFound(failure)) throw failure;
   }
   throw lastError instanceof Error ? lastError : new Error(`${action} 调用失败`);
+}
+
+/** 控制路径上没有服务（404）。★ 跟"设备用正文报错"是两回事，见 `postSoap` */
+function notFoundError(url: string): Error {
+  const err = new Error(`控制地址不存在（404）：${url}`);
+  (err as { notFound?: boolean }).notFound = true;
+  return err;
+}
+
+/**
+ * ★ 不用 `instanceof 自定义 Error 子类` —— Babel 转译 `extends Error` 时
+ *   prototype 链会断，`instanceof` 在真机上未必成立。用标记属性最稳。
+ */
+function isNotFound(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { notFound?: boolean }).notFound === true
+  );
 }
 
 async function postSoap(url: string, soapAction: string, body: string): Promise<string> {
@@ -238,7 +273,15 @@ async function postSoap(url: string, soapAction: string, body: string): Promise<
       signal: controller.signal,
     });
     const text = await response.text();
-    // ★ 不看 HTTP 状态码：失败时也回 200 的设备很多，错误藏在 Fault 里；
+
+    // ★★ 404 必须单独拎出来。它表示**这个路径上压根没有服务**（多半是我们
+    //   把控制地址算错了），跟"设备用 200 回一个 Fault"完全不是一回事。
+    //   不区分的话，一个错误路径会被当成**投屏成功**：用户看到"正在投屏到 X"，
+    //   电视一动不动，而两边都没有任何报错（2026-10-16 实测踩到，
+    //   对照 B 站投同一台设备用的是 /control，一次就成）。
+    if (response.status === 404) throw notFoundError(url);
+
+    // ★ 其余不看 HTTP 状态码：失败时也回 200 的设备很多，错误藏在 Fault 里；
     //   反过来也有回 500 但其实干成了的。**以正文为准**。
     const fault = faultOf(text);
     if (fault) throw new Error(fault);
