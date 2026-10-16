@@ -21,7 +21,7 @@ import {
   enterHorizontalRow,
   leaveHorizontalRow,
 } from '../components/horizontalRow';
-import { TAB_BAR_SPACE, radius, space, useTheme } from '../theme';
+import { radius, space, useTabBarSpace, useTheme } from '../theme';
 import type { Palette } from '../theme';
 import type { HomeBlock } from '../api/aggregator';
 import type { SourceId, VodItem } from '../types/schema';
@@ -90,7 +90,11 @@ function toColumns(items: VodItem[], rows: number): VodItem[][] {
 
 export function HomeScreen({ onOpen }: Props): React.JSX.Element {
   const { color } = useTheme();
-  const styles = useMemo(() => makeStyles(color), [color]);
+  const tabBarSpace = useTabBarSpace();
+  const styles = useMemo(
+    () => makeStyles(color, tabBarSpace),
+    [color, tabBarSpace],
+  );
   const [state, setState] =
     useState<Record<SourceId, SourceState>>(initialState);
   const [refreshing, setRefreshing] = useState(false);
@@ -204,7 +208,11 @@ function Block({
   onOpen: (item: VodItem) => void;
 }): React.JSX.Element {
   const { color } = useTheme();
-  const styles = useMemo(() => makeStyles(color), [color]);
+  const tabBarSpace = useTabBarSpace();
+  const styles = useMemo(
+    () => makeStyles(color, tabBarSpace),
+    [color, tabBarSpace],
+  );
   const columns = useMemo(() => toColumns(block.items, ROWS), [block.items]);
 
   return (
@@ -249,7 +257,11 @@ function Block({
 /** 骨架屏：一块标题条 + 两排灰卡片，呼吸式闪烁 */
 function SkeletonBlock(): React.JSX.Element {
   const { color } = useTheme();
-  const styles = useMemo(() => makeStyles(color), [color]);
+  const tabBarSpace = useTabBarSpace();
+  const styles = useMemo(
+    () => makeStyles(color, tabBarSpace),
+    [color, tabBarSpace],
+  );
   const pulse = useRef(new Animated.Value(0.35)).current;
 
   useEffect(() => {
@@ -297,9 +309,9 @@ function SkeletonBlock(): React.JSX.Element {
   );
 }
 
-const makeStyles = (color: Palette) =>
+const makeStyles = (color: Palette, tabBarSpace: number) =>
   StyleSheet.create({
-    content: { padding: space.lg, paddingBottom: TAB_BAR_SPACE },
+    content: { padding: space.lg, paddingBottom: tabBarSpace },
     center: { alignItems: 'center', paddingVertical: space.xl * 2 },
     hint: { color: color.textDim, fontSize: 13 },
     block: { marginBottom: space.xl },

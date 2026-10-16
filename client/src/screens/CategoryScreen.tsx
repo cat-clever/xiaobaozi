@@ -31,7 +31,7 @@ import {
   enterHorizontalRow,
   leaveHorizontalRow,
 } from '../components/horizontalRow';
-import { TAB_BAR_SPACE, radius, space, useTheme } from '../theme';
+import { radius, space, useTabBarSpace, useTheme } from '../theme';
 import type { Palette } from '../theme';
 import type { SourceId, VodItem } from '../types/schema';
 
@@ -95,7 +95,11 @@ interface Props {
 
 export function CategoryScreen({ onOpen }: Props): React.JSX.Element {
   const { color } = useTheme();
-  const styles = useMemo(() => makeStyles(color), [color]);
+  const tabBarSpace = useTabBarSpace();
+  const styles = useMemo(
+    () => makeStyles(color, tabBarSpace),
+    [color, tabBarSpace],
+  );
   const [source, setSource] = useState<SourceId>('s1');
   const [s1Filter, setS1Filter] = useState<S1Filter>(EMPTY_S1);
   const [s2Filter, setS2Filter] = useState<S2Filter>(EMPTY_S2);
@@ -423,7 +427,11 @@ function FilterRowView({
   onPick: (value: string) => void;
 }): React.JSX.Element {
   const { color } = useTheme();
-  const styles = useMemo(() => makeStyles(color), [color]);
+  const tabBarSpace = useTabBarSpace();
+  const styles = useMemo(
+    () => makeStyles(color, tabBarSpace),
+    [color, tabBarSpace],
+  );
   return (
     <View style={styles.row}>
       <Text style={styles.rowTitle}>{row.title}</Text>
@@ -458,9 +466,9 @@ function FilterRowView({
   );
 }
 
-const makeStyles = (color: Palette) =>
+const makeStyles = (color: Palette, tabBarSpace: number) =>
   StyleSheet.create({
-    content: { paddingHorizontal: space.lg, paddingBottom: TAB_BAR_SPACE },
+    content: { paddingHorizontal: space.lg, paddingBottom: tabBarSpace },
     column: { gap: GAP },
     sourceTabs: {
       flexDirection: 'row',

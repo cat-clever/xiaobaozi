@@ -12,7 +12,7 @@ import {
 import { hotSearch, searchAll } from '../api/aggregator';
 import { MediaCard } from '../components/MediaCard';
 import { pushSearchHistory, getSearchHistory } from '../utils/storage';
-import { TAB_BAR_SPACE, radius, space, useTheme } from '../theme';
+import { radius, space, useTabBarSpace, useTheme } from '../theme';
 import type { Palette } from '../theme';
 import type { VodItem } from '../types/schema';
 
@@ -27,7 +27,11 @@ interface Props {
 
 export function SearchScreen({ onOpen }: Props): React.JSX.Element {
   const { color } = useTheme();
-  const styles = useMemo(() => makeStyles(color), [color]);
+  const tabBarSpace = useTabBarSpace();
+  const styles = useMemo(
+    () => makeStyles(color, tabBarSpace),
+    [color, tabBarSpace],
+  );
   const [keyword, setKeyword] = useState('');
   const [items, setItems] = useState<VodItem[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
@@ -150,7 +154,7 @@ export function SearchScreen({ onOpen }: Props): React.JSX.Element {
   );
 }
 
-const makeStyles = (color: Palette) =>
+const makeStyles = (color: Palette, tabBarSpace: number) =>
   StyleSheet.create({
     root: { flex: 1 },
     searchBar: {
@@ -177,7 +181,7 @@ const makeStyles = (color: Palette) =>
       justifyContent: 'center',
     },
     buttonText: { color: '#1A1206', fontWeight: '600' },
-    list: { paddingHorizontal: space.lg, paddingBottom: TAB_BAR_SPACE },
+    list: { paddingHorizontal: space.lg, paddingBottom: tabBarSpace },
     row: { gap: GAP },
     center: { paddingVertical: space.xl },
     suggestions: { paddingHorizontal: space.lg },

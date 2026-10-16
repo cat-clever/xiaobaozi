@@ -24,7 +24,11 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import type { LayoutChangeEvent } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import {
+  SafeAreaProvider,
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 
 import {
   GlassBox,
@@ -39,6 +43,7 @@ import { SearchScreen } from './src/screens/SearchScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { ThemeProvider, radius, space, useTheme } from './src/theme';
 import {
+  LiquidGlassContainerView,
   LiquidGlassView,
   isLiquidGlassSupported,
 } from '@callstack/liquid-glass';
@@ -56,6 +61,15 @@ const TABS: Array<{ id: Tab; label: string }> = [
 
 /** 悬浮 Tab 栏离底边的距离 —— 不贴底，抬上来一点 */
 const TAB_BAR_BOTTOM = space.xl;
+
+/**
+ * iOS 26 `UIGlassContainerEffect` 的**融合距离**：两颗玻璃离得比这个近就会
+ * 融成一个形状（系统 Tab 栏的选中胶囊就是这么"长"出来的）。
+ *
+ * ★ 太小 → 胶囊跟整条各画各的，重叠处会叠成一块更厚的玻璃，看着脏；
+ *   太大 → 相邻的整条会被一起吸进去，形状糊掉。12 是照系统观感试的手感值。
+ */
+const GLASS_MERGE_SPACING = 12;
 
 
 type Route = { name: 'tabs' } | { name: 'settings' };
@@ -76,7 +90,14 @@ interface PlaySession {
 function App(): React.JSX.Element {
   return (
     <ThemeProvider>
-      <AppShell />
+      {/*
+        ★ `SafeAreaProvider` 提到这一层（原来在两个分支里各写了一遍）——
+          好让 `AppShell` 自己就能 `useSafeAreaInsets()`：
+          底部 Tab 栏的位置要按安全区抬高（见下面 `tabBarWrap` 的说明）。
+      */}
+      <SafeAreaProvider>
+        <AppShell />
+      </SafeAreaProvider>
     </ThemeProvider>
   );
 }
@@ -85,6 +106,16 @@ function AppShell(): React.JSX.Element {
   const { color, glass } = useTheme();
   const { width } = useWindowDimensions();
   /**
+   * 底部安全区（Home Indicator 那一条）。
+   *
+   * ★ 根视图的 `SafeAreaView` 已经**不吃底部**了（见那边的注释：就是它造成了
+   *   「Tab 栏下面一条白条」），所以这里得自己把这段高度补回去：
+   *     · Tab 栏按它抬高 —— 位置跟从前一模一样（以前是 SafeAreaView 的
+   *       padding 顶上去的，现在是 `bottom` 自己算）
+   *     · 各页列表底部留白也按它加高 —— 否则最后一行会压到 Home Indicator 上
+   */
+  const insets = useSafeAreaInsets();
+  /**
    * ★ 玻璃**真的能渲染**时（设置里的开关 + 原生玻璃视图都在），
    *   Tab 栏才垫透光底 —— 否则玻璃背后没有东西可糊 / 可透，
    *   要退回接近不透明的底保证文字可读（见 `theme/index.ts` 的 bar / barSolid）。
@@ -92,7 +123,6 @@ function AppShell(): React.JSX.Element {
   const glassOn = glass && NATIVE_GLASS_AVAILABLE;
   const realGlass =
     Platform.OS === 'ios' && (isLiquidGlassSupported as boolean);
-  const GlassShell = (realGlass ? LiquidGlassView : GlassBox) as React.ComponentType<any>;
   /**
    * 本机拿到的是**真·液态玻璃**（iOS 26+）吗。
    *
@@ -102,8 +132,8 @@ function AppShell(): React.JSX.Element {
    */
   const liquidGlass = glassOn && LIQUID_GLASS_AVAILABLE;
   const styles = useMemo(
-    () => makeStyles(color, glassOn, liquidGlass),
-    [color, glassOn, liquidGlass],
+    () => makeStyles(color, glassOn, liquidGlass, insets.bottom),
+    [color, glassOn, liquidGlass, insets.bottom],
   );
   const [tab, setTab] = useState<Tab>('home');
   const [route, setRoute] = useState<Route>({ name: 'tabs' });
@@ -533,24 +563,102 @@ function AppShell(): React.JSX.Element {
     </View>
   ) : null;
 
+  /**
+   * 玻璃材质的**明暗跟应用主题走**（不是系统外观）——
+   * 跟 `GlassBox` 那套约定一致：系统浅色 + App 深色时不指定，
+   * 玻璃会按浅色材质渲染，糊在深色页面上就是一块刺眼的亮。
+   */
+  const glassScheme: 'light' | 'dark' =
+    color.statusBar === 'dark-content' ? 'light' : 'dark';
+
+  /**
+   * 选中胶囊 —— 跟着手指走的那一颗。
+   *
+   * ★ 两端共用**同一个壳**（`styles.tabIndicator` + 同一组动画值），
+   *   只有**里子**不同：
+   *     · iOS 26 真材质 → 塞一颗 `LiquidGlassView`（会跟整条融成一块）
+   *     · 其余（Android / iOS 26 以下）→ 原来那层实心填充
+   *   这样位置、滑动幅度、"探出整条"的尺度两端**天然一致**，不会各调各的。
+   *
+   * ★ 按住的"扩张"分两层：整条 1.04（`tabScale`，仅非真玻璃），
+   *   这一颗胶囊 1.22 / 1.05（`capsuleScale*`，两端都有）——
+   *   于是胶囊顶出去的那一截会**越过整条的上下边**。
+   */
+  const capsule =
+    tabRects.length === TABS.length ? (
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.tabIndicator,
+          {
+            width: tabRects[tabIndexOf(tab)]?.width ?? 0,
+            transform: [
+              { translateX: capsuleL },
+              { scaleX: capsuleScaleX },
+              { scaleY: capsuleScaleY },
+            ],
+          },
+        ]}
+      >
+        {realGlass ? (
+          /* ★ `LiquidGlassView` **没有 `cornerRadius` 属性** —— 它从自己
+             `style` 的 `borderRadius` 取圆角（见 `LiquidGlassView.mm` 的
+             `layoutSubviews`：`_view.layer.cornerRadius = self.layer.cornerRadius`）。
+             所以圆角写在这里，不写属性。 */
+          <LiquidGlassView
+            style={[StyleSheet.absoluteFill, { borderRadius: radius.pill }]}
+            effect="regular"
+            colorScheme={glassScheme}
+          />
+        ) : (
+          <View style={styles.tabIndicatorInner} />
+        )}
+      </Animated.View>
+    ) : null;
+
+  /** 三个 Tab 按钮。两端渲染的是同一份 —— 免得改了一边忘了另一边 */
+  const tabButtons = TABS.map((item, index) => (
+    <TabButton
+      key={item.id}
+      label={item.label}
+      active={tab === item.id}
+      passive={liquidGlass}
+      onPress={() => goToTab(item.id)}
+      onPressIn={() => setTabHeld(true)}
+      onPressOut={() => setTabHeld(false)}
+      onLayout={e => handleTabLayout(index, e)}
+    />
+  ));
+
   if (route.name === 'settings') {
     return (
-      <SafeAreaProvider>
+      <>
         <StatusBar barStyle={color.statusBar} />
         <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
           <SettingsScreen onBack={backToTabs} />
         </SafeAreaView>
         {overlay}
-      </SafeAreaProvider>
+      </>
     );
   }
 
   return (
-    <SafeAreaProvider>
+    <>
       <StatusBar
         barStyle={fullscreenPlaying ? 'light-content' : color.statusBar}
       />
-      <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+      {/*
+        ★★ 底部**只留 top 边** —— 这就是「Tab 栏下面那条白条」的根因。
+          之前 `edges={['top','bottom']}` 把整个内容区的下边界压在安全区上沿
+          （约 34pt）：那一块永远画不到内容，只剩 `color.bg` 一层实色。
+          亮色主题下 `bg` 是 #F6F6F9 —— 于是玻璃条底下横着一条近白的实心带
+          （用户 2026-10-16 报的「白条遮挡」）。
+          去掉之后内容一直铺到屏幕底边，那条带自然消失。
+        ★ 代价是内容会压到 Home Indicator 上 —— 这正是 iOS 26 的做法
+          （悬浮栏本来就该浮在内容之上）。所以 Tab 栏自己按安全区抬高
+          （见 `tabBarWrap`），列表底部留白也要加上这一段（见 `useTabBarSpace`）。
+      */}
+      <SafeAreaView style={styles.root} edges={['top']}>
         <View style={styles.header}>
           <View style={styles.headerMain}>
             <Text style={styles.brand}>小包子影视</Text>
@@ -596,77 +704,70 @@ function AppShell(): React.JSX.Element {
         <View style={styles.tabBarWrap} pointerEvents="box-none">
           {/* 拖拽手势挂在这一层：内容区不受影响，板块该滚滚 */}
           <View {...tabBarPan.panHandlers}>
-            {/* ★ 这一层 `Animated.View`（JS 弹簧回弹）**只在没有真玻璃时**才用：
-                那种情况下按钮垫在玻璃上面、玻璃收不到触摸，全靠它补手感
-                （Android / iOS 26 以下）。
-                iOS 26 有真材质时**不叠** —— 系统的按压反馈是真的（整条会鼓），
-                再加一层缩放就是双重放大，反而更假。
-                ★ 但**胶囊那一层两端都要**（见下面 `capsuleScale`）：
-                  "整条扩张，然后胶囊扩张得要超过整条" —— 用户 2026-10-16 的原话。 */}
-            <Animated.View
-              style={
-                liquidGlass ? undefined : { transform: [{ scale: tabScale }] }
-              }
-            >
-              {/* ★★ 触摸面 = **玻璃**（iOS 26）。
-                  按钮那一层已退成纯展示（`passive`），所以手指一定先打在玻璃上：
-                    · `UIGlassEffect(isInteractive)` 的扩张 / 高光**真的会动**
-                    · RN 的 responder 从玻璃那层往上冒泡到这个 `Pressable`，
-                      再用 `locationX` 反推按的是哪一项（见 `pressTabAt`）
-                  没有真玻璃时（Android / iOS 26 以下）按钮自己就是 Pressable、
-                  命中优先级更高，这里的 onPress 根本不会触发 —— 两边不打架。 */}
-              <Pressable onPress={e => pressTabAt(e.nativeEvent.locationX)}>
-                <GlassShell
-                  style={styles.tabBar}
-                  cornerRadius={radius.pill}
-                  interactive
-                  effect="regular"
-                  colorScheme="dark"
-                >
-                  {/* 内层胶囊：跟着手指滑动，指到哪跟到哪。
-                      ★ 按住的"扩张"分两层：外层整条 1.04（`tabScale`，仅非真玻璃），
-                        这一颗胶囊 1.16 / 1.05（`capsuleScale*`，两端都有）——
-                        于是胶囊顶出去的那一截会**越过 tab 条的上下边**。 */}
-                  {!realGlass && tabRects.length === TABS.length ? (
-                    <Animated.View
-                      pointerEvents="none"
-                      style={[
-                        styles.tabIndicator,
-                        {
-                          width:
-                            tabRects[tabIndexOf(tab)]?.width ?? 0,
-                          transform: [
-                            { translateX: capsuleL },
-                            { scaleX: capsuleScaleX },
-                            { scaleY: capsuleScaleY },
-                          ],
-                        },
-                      ]}
-                    >
-                      <View style={styles.tabIndicatorInner} />
-                    </Animated.View>
-                  ) : null}
+            {/*
+              ★★ iOS 26（真材质）：**两颗玻璃塞进同一个 `UIGlassContainerEffect`**
+                 —— 这是参考图那个效果的关键，不是靠 `scaleY` 硬撑出来的。
 
-                  {TABS.map((item, index) => (
-                    <TabButton
-                      key={item.id}
-                      label={item.label}
-                      active={tab === item.id}
-                      passive={liquidGlass}
-                      onPress={() => goToTab(item.id)}
-                      onPressIn={() => setTabHeld(true)}
-                      onPressOut={() => setTabHeld(false)}
-                      onLayout={e => handleTabLayout(index, e)}
-                    />
-                  ))}
-                </GlassShell>
-              </Pressable>
-            </Animated.View>
+                 系统 Tab 栏的选中胶囊不是"画"上去的一块，而是**另一颗玻璃**：
+                 它跟整条靠得够近时被容器融成**一个形状**，
+                 于是胶囊顶出去的那一截自然越过整条的上下边
+                 （参考图里"胶囊探出整条"就是这个）。
+
+                 ★ 层级：**胶囊在前、整条在后** —— container 的 contentView 按
+                   插入顺序叠。探出去的那截露在外面，跟整条重叠的部分融成一块。
+
+                 ★ 这一支**不叠** JS 弹簧（`tabScale`）：系统的按压反馈是真的
+                   （整条会鼓），再加一层缩放就是双重放大，反而更假。
+
+                 ★ 没有真材质的机型（iOS 26 以下 / Android）走下面那一支 ——
+                   还是老办法：`GlassBox` + 一颗 JS 动画的实心胶囊。
+            */}
+            {realGlass ? (
+              <LiquidGlassContainerView
+                spacing={GLASS_MERGE_SPACING}
+                style={styles.tabBarGroup}
+                pointerEvents="box-none"
+              >
+                {capsule}
+                {/* ★★ 触摸面 = **玻璃**。
+                    按钮那一层已退成纯展示（`passive`），所以手指一定先打在玻璃上：
+                      · `UIGlassEffect(isInteractive)` 的扩张 / 高光**真的会动**
+                      · RN 的 responder 从玻璃那层往上冒泡到这个 `Pressable`，
+                        再用 `locationX` 反推按的是哪一项（见 `pressTabAt`） */}
+                <Pressable onPress={e => pressTabAt(e.nativeEvent.locationX)}>
+                  {/* ★ 同样不传 `cornerRadius`：圆角由 `styles.tabBar` 的
+                      `borderRadius` 带过去（见胶囊那边的注释） */}
+                  <LiquidGlassView
+                    style={styles.tabBar}
+                    interactive
+                    effect="regular"
+                    colorScheme={glassScheme}
+                  >
+                    {tabButtons}
+                  </LiquidGlassView>
+                </Pressable>
+              </LiquidGlassContainerView>
+            ) : (
+              /* ★ 这一层 `Animated.View`（JS 弹簧回弹）只在没有真玻璃时才用：
+                  那种情况下按钮垫在玻璃上面、玻璃收不到触摸，全靠它补手感。 */
+              <Animated.View style={{ transform: [{ scale: tabScale }] }}>
+                <Pressable onPress={e => pressTabAt(e.nativeEvent.locationX)}>
+                  <GlassBox
+                    style={styles.tabBar}
+                    cornerRadius={radius.pill}
+                    interactive
+                  >
+                    {capsule}
+                    {tabButtons}
+                  </GlassBox>
+                </Pressable>
+              </Animated.View>
+            )}
           </View>
         </View>
       </SafeAreaView>
       {overlay}
-    </SafeAreaProvider>
+    </>
   );
 }
 
@@ -733,7 +834,13 @@ function TabButton({
   );
 }
 
-const makeStyles = (color: Palette, glassOn = true, liquidGlass = false) =>
+const makeStyles = (
+  color: Palette,
+  glassOn = true,
+  liquidGlass = false,
+  /** 底部安全区高度 —— 只有 `tabBarWrap` 用得上（见那边的注释） */
+  safeBottom = 0,
+) =>
   StyleSheet.create({
     root: { flex: 1, backgroundColor: color.bg },
     header: {
@@ -767,7 +874,10 @@ const makeStyles = (color: Palette, glassOn = true, liquidGlass = false) =>
       position: 'absolute',
       left: 0,
       right: 0,
-      bottom: TAB_BAR_BOTTOM,
+      // ★ 按底部安全区抬高。以前这段高度是根 `SafeAreaView` 的 bottom padding
+      //   顶出来的；现在那个 padding 去掉了（就是它造成了底下那条白条），
+      //   所以这里显式加回来 —— Tab 栏的**视觉位置跟从前完全一致**。
+      bottom: TAB_BAR_BOTTOM + safeBottom,
       alignItems: 'center',
     },
     // ★ 这里**不设 padding** —— 胶囊是绝对定位的兄弟节点，父级一旦有 padding，
@@ -801,6 +911,14 @@ const makeStyles = (color: Palette, glassOn = true, liquidGlass = false) =>
         ? color.bar
         : color.barSolid,
     },
+    /**
+     * iOS 26 那颗 `UIGlassContainerEffect` 的外壳 —— **尺寸跟着整条走**。
+     *
+     * ★ 它自己不占额外空间：里面的胶囊是绝对定位、整条是唯一的在流子节点，
+     *   所以这一层的高度 = 整条的高度。胶囊探出去的那一截靠 `overflow: visible`
+     *   露出来（`UIVisualEffectView` 默认也不裁）。
+     */
+    tabBarGroup: { overflow: 'visible' },
     tabIndicator: {
       position: 'absolute',
       left: 0,

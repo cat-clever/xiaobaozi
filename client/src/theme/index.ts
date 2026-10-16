@@ -6,6 +6,7 @@
  *   写死的 `theme.color.x` 会让亮色主题切不动。
  */
 import { Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export interface Palette {
   /** 页面底色 */
@@ -134,9 +135,23 @@ export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 } as const;
 
 /**
  * 悬浮 Tab 栏占掉的高度（含它离底边留的那点距离）。
- * 各页面的列表底部要留出这么多，否则最后一行会被 Tab 栏压住。
+ *
+ * ★ 这是**不含底部安全区**的基数 —— 直接拿它当 `paddingBottom` 会漏掉
+ *   Home Indicator 那一条（根 `SafeAreaView` 已经不吃底部了，见 `App.tsx`）。
+ *   列表底部一律用下面的 `useTabBarSpace()`，它会自动把安全区加进来。
  */
 export const TAB_BAR_SPACE = 92;
+
+/**
+ * 列表底部该留多高 = Tab 栏占的高度 + 底部安全区。
+ *
+ * ★ 为什么必须是一个 hook：安全区高度只有运行期才知道（机型 / 横竖屏都不同），
+ *   而 `TAB_BAR_SPACE` 是个模块级常量。各页面原来直接用常量，
+ *   在「根视图不吃底部安全区」之后最后一行会压到 Home Indicator 上。
+ */
+export function useTabBarSpace(): number {
+  return TAB_BAR_SPACE + useSafeAreaInsets().bottom;
+}
 
 export { ThemeProvider, useTheme } from './ThemeContext';
 export type { ThemeSettings } from './ThemeContext';
