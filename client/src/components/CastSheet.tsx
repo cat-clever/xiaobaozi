@@ -17,6 +17,7 @@ import {
   View,
 } from 'react-native';
 
+import { currentCastDiag } from '../media/mediaServer';
 import { AirPlayButton, AIRPLAY_AVAILABLE } from './AirPlayButton';
 import { GlassBox } from './GlassBox';
 import { radius, space, useTheme } from '../theme';
@@ -183,6 +184,14 @@ function CastingPanel({
         <Text style={styles.warn}>转发模式：投屏期间请别让手机息屏或退出 App</Text>
       ) : null}
       {/*
+        ★★ 投屏链路诊断。投屏"投上了但电视不动/播一秒就崩"时，界面之外什么
+           都看不到 —— 接收端到底收到了什么样的播放列表、重写有没有真的发生，
+           全靠这几行。★ 必须每次渲染现读：诊断是接收端来拉播放列表时才写进去
+           的，晚于投屏那一刻，跟着状态轮询刷新才拿得到。
+      */}
+      <CastDiagLines styles={styles} />
+
+      {/*
         ★ 转发模式下把投过去的地址摆出来（诊断用）。
           电视"收下了但不出画面"时，这是唯一能分清责任的办法：
           拿电脑浏览器打开这个地址 —— 能下到播放列表说明手机服务可达，
@@ -202,6 +211,29 @@ function CastingPanel({
         </Pressable>
       </View>
     </View>
+  );
+}
+
+/** 投屏链路的几行诊断（见 `mediaServer.ts` 的 `CastPlaylistDiag`） */
+function CastDiagLines({
+  styles,
+}: {
+  styles: ReturnType<typeof makeStyles>;
+}): React.JSX.Element {
+  const diag = currentCastDiag();
+  if (diag === null) {
+    return <Text style={styles.diag}>链路：还没收到接收端的播放列表请求</Text>;
+  }
+  return (
+    <>
+      <Text style={styles.diag}>
+        转封装：{diag.remuxed ? '已转 fMP4' : '未转（直通）'} · 重写：
+        {diag.rewritten ? '成功' : '失败（原样透传）'}
+      </Text>
+      <Text style={styles.diag} numberOfLines={1}>
+        首片：{diag.firstSegment}
+      </Text>
+    </>
   );
 }
 
@@ -303,6 +335,12 @@ const makeStyles = (color: Palette) =>
       fontSize: 10,
       lineHeight: 15,
       marginTop: space.sm,
+    },
+    diag: {
+      color: color.textDim,
+      fontSize: 11,
+      lineHeight: 16,
+      marginTop: space.xs,
     },
     castingActions: { flexDirection: 'row', gap: space.sm, marginTop: space.md },
     action: {

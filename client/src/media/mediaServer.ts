@@ -50,6 +50,43 @@ let sequence = 0;
 
 const sessions = new Map<string, MediaSession>();
 
+/**
+ * 最近一次**投屏**会话的播放列表重写诊断。
+ *
+ * ★ 只给投屏面板显示用。投屏"投上了但电视不动"时，界面之外什么都看不到 ——
+ *   接收端到底收到了什么样的播放列表、重写有没有真的发生，全靠这个。
+ *   （2026-10-16 排查时，光靠接收端日志和让用户开浏览器都定位不了，
+ *     干脆把它摆到面板上。）
+ */
+export interface CastPlaylistDiag {
+  /** 重写是否成功。false = 抛异常走了"原样透传"，分片地址还是 CDN 原名 */
+  rewritten: boolean;
+  /** 重写后第一条分片的名字（去掉域名，只看后缀） */
+  firstSegment: string;
+  /** 这条线路有没有启用转封装 */
+  remuxed: boolean;
+}
+
+let castDiag: CastPlaylistDiag | null = null;
+
+/** 投屏面板读它（每次渲染读一次，跟着状态轮询刷新） */
+export function currentCastDiag(): CastPlaylistDiag | null {
+  return castDiag;
+}
+
+/** 播放列表里第一条分片的名字（去掉域名，只留最后一段）—— 诊断只关心后缀 */
+function firstSegmentName(body: string): string {
+  for (const line of body.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const q = trimmed.indexOf('?');
+    const cut = q < 0 ? trimmed : trimmed.slice(0, q);
+    const last = cut.slice(cut.lastIndexOf('/') + 1);
+    return last || trimmed.slice(0, 40);
+  }
+  return '(没有分片行)';
+}
+
 export class MediaSession {
   /**
    * 是否走 HEVC-TS -> fMP4 转封装（`prepareRemux()` 探测出来后置位）。
@@ -75,8 +112,11 @@ export class MediaSession {
      * ★ 除了"地址用局域网"，它还决定分片怎么命名 —— 投屏时**不带 `.ts`**，
      *   免得接收端误判成 HEVC-in-TS 去走本地换封装（那条路在 Android 电视上
      *   会让接收端崩，见 `segmentNaming.ts` 的 `localSegmentName`）。
+     *
+     * ★ 公开的：`handlePlaylistRequest` 要据此决定"这条诊断值不值得记"
+     *   （本地播放的播放列表请求会把投屏那份覆盖掉）。
      */
-    private readonly forCast = false,
+    readonly forCast = false,
   ) {}
 
   /** 分片在本地代理地址里叫什么（后缀规则见 `segmentNaming.ts`） */
@@ -178,6 +218,7 @@ function handlePlaylistRequest(event: PlaylistRequestEvent): void {
   let output = event.text;
   const session = sessions.get(event.sid);
   if (session?.config.playlist) {
+    let rewritten = false;
     try {
       output = rewritePlaylist(event.text, event.url, {
         inheritQuery: session.config.playlist.inheritQuery,
@@ -185,8 +226,17 @@ function handlePlaylistRequest(event: PlaylistRequestEvent): void {
         // 转封装会话要补 `#EXT-X-MAP`；普通会话不传，播放列表结构一点不动
         mapUri: session.usesRemux ? session.initUrl() : null,
       });
+      rewritten = true;
     } catch {
       output = event.text;
+    }
+    // ★ 只有投屏会话才记 —— 本地播放的播放列表请求会把它覆盖掉
+    if (session.forCast) {
+      castDiag = {
+        rewritten,
+        firstSegment: firstSegmentName(output),
+        remuxed: session.usesRemux,
+      };
     }
   }
   void MediaServerNative?.respondPlaylist(event.reqId, output);
