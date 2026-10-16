@@ -661,7 +661,7 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
             noteResult(proxied.ok, "代理取流失败")
             noteRecent(
                 "取流 $shortName [$rangeTag] ${if (proxied.ok) "ok" else "FAIL"}" +
-                    " ${proxied.bytes}B/${proxied.status}",
+                    " ${proxied.bytes}B/${proxied.status}/${proxied.magic}",
             )
         } catch (_: Exception) {
             // 播放器随时会掐连接，这里不值得报错
@@ -696,8 +696,20 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         return null
     }
 
-    /** 代理结果：状态码 + 实际写出去的字节数（"ok 但正文是空的"最难查） */
-    private class ProxyResult(val ok: Boolean, val status: Int, val bytes: Long)
+    /**
+     * 代理结果：状态码 + 实际写出去的字节数 + **开头几个字节的魔数**。
+     *
+     * ★ 魔数是最省事的"内容对不对"判据：
+     *   `47` = TS 同步字节（对）、`3C` = `<`（回了个 HTML 错误页）、
+     *   `7B` = `{`（回了个 JSON）。"状态码 200、字节数也对，但内容是错误页"
+     *   这类问题只有看魔数才认得出来（2026-10-16）。
+     */
+    private class ProxyResult(
+        val ok: Boolean,
+        val status: Int,
+        val bytes: Long,
+        val magic: String,
+    )
 
     private fun proxy(
         sid: String,
@@ -736,7 +748,7 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
                 writeHead(out, 200, "OK", "application/vnd.apple.mpegurl", body.size.toLong(), null)
                 out.write(body)
                 out.flush()
-                return ProxyResult(true, 200, body.size.toLong())
+                return ProxyResult(true, 200, body.size.toLong(), "M3U8")
             }
 
             val stream = if (status in 200..299) conn.inputStream else conn.errorStream
@@ -749,19 +761,25 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
                 conn.getHeaderField("Content-Range"),
             )
             var written = 0L
+            var magic = ""
             if (stream != null) {
                 val chunk = ByteArray(COPY_BUFFER)
                 while (true) {
                     val read = stream.read(chunk)
                     if (read <= 0) break
+                    if (magic.isEmpty() && read >= 4) {
+                        magic = chunk.copyOfRange(0, 4).joinToString("") {
+                            "%02X".format(it.toInt() and 0xFF)
+                        }
+                    }
                     out.write(chunk, 0, read)
                     written += read
                 }
             }
             out.flush()
-            return ProxyResult(status in 200..299, status, written)
+            return ProxyResult(status in 200..299, status, written, magic)
         } catch (_: Throwable) {
-            return ProxyResult(false, -1, 0)
+            return ProxyResult(false, -1, 0, "")
         } finally {
             conn.disconnect()
         }
