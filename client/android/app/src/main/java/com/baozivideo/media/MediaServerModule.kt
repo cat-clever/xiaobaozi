@@ -113,6 +113,24 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
     /** 正在处理的请求数 / 历史峰值 —— 投屏时用它看线程池够不够（见 MAX_WORKERS） */
     private val activeCount = AtomicInteger(0)
     private val peakCount = AtomicInteger(0)
+
+    /**
+     * 最近几次请求的摘要（新在前），最多留 [RECENT_LOG_MAX] 条。
+     *
+     * ★★ 投屏崩在接收端、而我们的服务"成功 N / 失败 0"时，光看计数没用 ——
+     *   要知道**崩之前那几次请求到底长什么样**：拿到的是哪一段、回了多少字节、
+     *   状态码是什么。这几行是唯一能还原现场的东西（2026-10-16）。
+     */
+    private val recentLog = ArrayDeque<String>()
+
+    private fun noteRecent(line: String) {
+        synchronized(recentLog) {
+            recentLog.addFirst(line)
+            while (recentLog.size > RECENT_LOG_MAX) recentLog.removeLast()
+        }
+    }
+
+    private fun recentSnapshot(): List<String> = synchronized(recentLog) { recentLog.toList() }
     private val sessions = ConcurrentHashMap<String, Session>()
     private val pending = ConcurrentHashMap<String, Pending>()
     private val requestSeq = AtomicInteger(0)
@@ -238,6 +256,9 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         map.putBoolean("running", running.get())
         map.putInt("active", activeCount.get())
         map.putInt("peak", peakCount.get())
+        val recent = Arguments.createArray()
+        for (line in recentSnapshot()) recent.pushString(line)
+        map.putArray("recent", recent)
         promise.resolve(map)
     }
 
@@ -625,12 +646,20 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
             }
 
             // 转封装会话的**媒体分片**：整段取回、转成 fMP4 再给（播放列表不走这里）
+            // 记一条请求摘要 —— 崩在接收端时，这是唯一能还原现场的东西
+            val shortName = target.substringBefore('?').substringAfterLast('/').take(28)
+            val rangeTag = if (range.isNullOrEmpty()) "-" else range.removePrefix("bytes=")
+
             if (session.remuxer != null && !isPlaylistUrl(target)) {
-                noteResult(remuxSegment(session, target, range, out), "转封装分片失败")
+                val ok = remuxSegment(session, target, range, out)
+                noteResult(ok, "转封装分片失败")
+                noteRecent("转封装 $shortName [$rangeTag] ${if (ok) "ok" else "FAIL"}")
                 return
             }
 
-            noteResult(proxy(segments[2], target, session, range, out), "代理取流失败")
+            val ok = proxy(segments[2], target, session, range, out)
+            noteResult(ok, "代理取流失败")
+            noteRecent("取流 $shortName [$rangeTag] ${if (ok) "ok" else "FAIL"}")
         } catch (_: Exception) {
             // 播放器随时会掐连接，这里不值得报错
         } finally {
@@ -914,6 +943,9 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
          *   线程是阻塞在网络上等 IO 的，不是算力密集，多开代价很小。
          */
         private const val MAX_WORKERS = 32
+
+        /** 最近请求记录留几条（面板只显示前几条） */
+        private const val RECENT_LOG_MAX = 12
         private const val MAX_HEAD_BYTES = 8192
 
         /** 转封装探测只要前 64KB —— PAT/PMT 就在 TS 最前面 */

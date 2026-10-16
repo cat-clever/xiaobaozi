@@ -261,6 +261,15 @@ function CastDiagLines({
           最后失败：{stats.lastFail}
         </Text>
       ) : null}
+      {/*
+        ★ 最近几次请求（新在前）。投屏崩在接收端、而服务"成功 N / 失败 0"时，
+          这几行是唯一能还原现场的东西 —— 崩之前它到底在拉哪一段。
+      */}
+      {stats?.recent?.slice(0, 4).map((line) => (
+        <Text key={line} style={styles.diag} numberOfLines={1}>
+          · {line}
+        </Text>
+      ))}
       {diag === null ? (
         <Text style={styles.diag}>链路：还没收到接收端的播放列表请求</Text>
       ) : (

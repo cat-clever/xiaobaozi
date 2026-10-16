@@ -94,6 +94,8 @@ export interface MediaServerStats {
   active?: number;
   /** 历史峰值 —— 投屏时如果它顶到上限，说明线程池不够（见 `MAX_WORKERS`） */
   peak?: number;
+  /** 最近几次请求的摘要（新在前）：`取流 output_000000.ts [0-65535] ok` */
+  recent?: string[];
 }
 
 const native = (NativeModules as Record<string, unknown>).MediaServer as
