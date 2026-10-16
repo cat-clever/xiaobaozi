@@ -65,6 +65,8 @@ export interface CastPlaylistDiag {
   firstSegment: string;
   /** 这条线路有没有启用转封装 */
   remuxed: boolean;
+  /** 没启用的话，为什么（空串 = 启用了） */
+  remuxWhy: string;
 }
 
 let castDiag: CastPlaylistDiag | null = null;
@@ -111,6 +113,9 @@ export class MediaSession {
    *   播放列表里补 `#EXT-X-MAP` 指向 init 分片。
    */
   private remuxing = false;
+
+  /** `remuxing` 为 false 时，**为什么**没转（给投屏面板诊断用） */
+  remuxWhy = '';
 
   /** 这条线路会不会转封装（播放列表重写据此决定写不写 `#EXT-X-MAP`） */
   get usesRemux(): boolean {
@@ -174,21 +179,40 @@ export class MediaSession {
    * 不会比不探测更糟。
    */
   async prepareRemux(playlistUrl: string): Promise<boolean> {
-    if (!this.config.playlist || this.remuxing) return this.remuxing;
+    if (!this.config.playlist) {
+      this.remuxWhy = '这条线路不是 HLS（没有播放列表）';
+      return false;
+    }
+    if (this.remuxing) return true;
     const native = MediaServerNative;
-    if (!native?.fetchText || !native.prepareRemux) return false;
+    if (!native?.fetchText || !native.prepareRemux) {
+      this.remuxWhy = '原生模块没有探测能力';
+      return false;
+    }
     try {
       const text = await native.fetchText(this.id, playlistUrl);
+      if (!text) {
+        this.remuxWhy = '取播放列表正文失败';
+        return false;
+      }
       // 加密线路别碰：分片是密文，转封装只会转出一堆垃圾
-      if (!text || /#EXT-X-KEY:(?!.*METHOD=NONE)/i.test(text)) return false;
+      if (/#EXT-X-KEY:(?!.*METHOD=NONE)/i.test(text)) {
+        this.remuxWhy = '这条线路加密了（EXT-X-KEY）';
+        return false;
+      }
 
       const first = firstMediaSegment(text, playlistUrl, this.config.playlist.inheritQuery);
-      if (!first) return false;
+      if (!first) {
+        this.remuxWhy = '播放列表里没有分片行';
+        return false;
+      }
 
       const verdict = await native.prepareRemux(this.id, first);
       this.remuxing = verdict?.remux === true;
-    } catch {
+      this.remuxWhy = this.remuxing ? '' : verdict?.reason || '原生没给原因';
+    } catch (err) {
       this.remuxing = false;
+      this.remuxWhy = '探测抛异常：' + (err instanceof Error ? err.message : String(err));
     }
     return this.remuxing;
   }
@@ -252,6 +276,7 @@ function handlePlaylistRequest(event: PlaylistRequestEvent): void {
         rewritten,
         firstSegment: firstSegmentName(output),
         remuxed: session.usesRemux,
+        remuxWhy: session.remuxWhy,
       };
     }
   }

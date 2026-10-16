@@ -32,6 +32,14 @@ export interface PlaylistRequestEvent {
 /** 转封装探测结果。`remux: false` = 这条线路照常直通（普通 TS / mp4） */
 export interface RemuxVerdict {
   remux: boolean;
+  /**
+   * `remux: false` 时**为什么**没转。
+   *
+   * ★ 投屏出问题时面板上只显示"未转（直通）"，不知道是"不是 HEVC"还是
+   *   "取不到样本"还是"换封装失败" —— 这三个的修法完全不同，
+   *   所以原因必须带出来（2026-10-16）。
+   */
+  reason?: string;
 }
 
 export interface MediaServerNativeModule {

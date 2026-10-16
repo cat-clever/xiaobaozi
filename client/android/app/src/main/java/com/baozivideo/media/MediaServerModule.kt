@@ -199,25 +199,26 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
     fun prepareRemux(sid: String, segmentUrl: String, promise: Promise) {
         val session = sessions[sid]
         if (session == null) {
-            promise.resolve(remuxVerdict(false))
+            promise.resolve(remuxVerdict(false, "会话不存在"))
             return
         }
         if (session.probing || session.remuxer != null) {
-            promise.resolve(remuxVerdict(session.remuxer != null))
+            promise.resolve(remuxVerdict(session.remuxer != null, "上一次探测还没回来"))
             return
         }
         session.probing = true
 
         Thread {
+            var why = ""
             var ok = false
             try {
-                ok = probeAndRemux(session, segmentUrl)
-            } catch (_: Throwable) {
-                ok = false
+                ok = probeAndRemux(session, segmentUrl) { why = it }
+            } catch (err: Throwable) {
+                why = "探测抛异常：" + (err.message ?: err.javaClass.simpleName)
             } finally {
                 session.probing = false
             }
-            promise.resolve(remuxVerdict(ok))
+            promise.resolve(remuxVerdict(ok, why))
         }.start()
     }
 
@@ -271,23 +272,56 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         }.start()
     }
 
-    /** 探测 + （是 HEVC 时）真转一片。返回是否启用转封装 */
-    private fun probeAndRemux(session: Session, segmentUrl: String): Boolean {
+    /** 探测 + （是 HEVC 时）真转一片。返回是否启用转封装；`why` 回失败原因 */
+    private fun probeAndRemux(
+        session: Session,
+        segmentUrl: String,
+        why: (String) -> Unit,
+    ): Boolean {
         // ① 先要前 64KB —— PAT/PMT 就在 TS 最前面
-        val head = fetchUpstream(session, segmentUrl, "bytes=0-${PROBE_BYTES - 1}") ?: return false
-        if (head.body.isEmpty()) return false
+        val head = fetchUpstream(session, segmentUrl, "bytes=0-${PROBE_BYTES - 1}")
+        if (head == null) {
+            why("取探测样本失败（连不上上游或超时）")
+            return false
+        }
+        if (head.status !in 200..299) {
+            why("取探测样本返回 HTTP ${head.status}")
+            return false
+        }
+        if (head.body.isEmpty()) {
+            why("探测样本是空的")
+            return false
+        }
 
         // ② 嗅编解码 —— 不是 HEVC 就此收手
-        if (TsFmp4Remuxer.videoStreamType(head.body) != 0x24) return false
+        val streamType = TsFmp4Remuxer.videoStreamType(head.body)
+        if (streamType == null) {
+            why("前 64KB 里没找到 PMT（${head.body.size} 字节，可能不是 TS）")
+            return false
+        }
+        if (streamType != 0x24) {
+            why("视频不是 HEVC（stream_type=0x%02X）".format(streamType))
+            return false
+        }
 
         // ③ 是 HEVC。手上这坨可能本来就是完整一片（服务器不认 Range 回了整片，
         //    或者这片本身就比探测长度小），那就直接转；否则整片再来一次
         val total = head.totalSize
         val complete = head.status == 200 || total == null || head.body.size.toLong() >= total
-        if (complete && attemptRemux(session, head.body, segmentUrl)) return true
+        if (complete) {
+            if (attemptRemux(session, head.body, segmentUrl)) return true
+            why("换封装失败（探测样本已是完整片）")
+            return false
+        }
 
-        val full = fetchUpstream(session, segmentUrl, null) ?: return false
-        return attemptRemux(session, full.body, segmentUrl)
+        val full = fetchUpstream(session, segmentUrl, null)
+        if (full == null || full.status !in 200..299) {
+            why("整片取回失败（HTTP ${full?.status ?: -1}）")
+            return false
+        }
+        if (attemptRemux(session, full.body, segmentUrl)) return true
+        why("换封装失败（整片 ${full.body.size} 字节）")
+        return false
     }
 
     /**
@@ -317,8 +351,13 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         return true
     }
 
-    private fun remuxVerdict(remux: Boolean) = Arguments.createMap().apply {
+    /**
+     * 探测结果。★ 带上 `reason` —— "转封装：未转"时必须知道**为什么**，
+     *   否则只能一轮一轮猜（2026-10-16 排查时就卡在这儿）。
+     */
+    private fun remuxVerdict(remux: Boolean, reason: String = "") = Arguments.createMap().apply {
         putBoolean("remux", remux)
+        putString("reason", reason)
     }
 
     /**

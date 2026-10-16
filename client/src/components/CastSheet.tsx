@@ -268,6 +268,11 @@ function CastDiagLines({
             转封装：{diag.remuxed ? '已转 fMP4' : '未转（直通）'} · 重写：
             {diag.rewritten ? '成功' : '失败（原样透传）'}
           </Text>
+          {!diag.remuxed && diag.remuxWhy !== '' ? (
+            <Text style={styles.diag} numberOfLines={2}>
+              未转原因：{diag.remuxWhy}
+            </Text>
+          ) : null}
           <Text style={styles.diag} numberOfLines={1}>
             首片：{diag.firstSegment}
           </Text>
