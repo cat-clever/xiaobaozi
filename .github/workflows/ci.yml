@@ -1,6 +1,15 @@
 name: CI
 
-# 每次推送都跑协议层的类型检查与单元测试 —— 它们是整个 App 的地基
+# 每次推送都跑：协议层的类型检查与单元测试 + **Android 的 Kotlin 编译**。
+#
+# ★ Android 这一条是 2026-10-16 补的。补之前 CI 压根不碰 Kotlin ——
+#   `tsc` 和 `vitest` 都是纯 TS，Android 只在打 tag 时（release.yml）才编一次。
+#   结果就是"编不过"要到出包那一刻才发现（历史上踩过两次：GlassView.kt 的
+#   `View.getWindow()`、`drawBitmapMesh` 的参数个数）。
+#
+#   加这条的直接原因：为了让 Android 走 Kyant 的 `backdrop`，整个工程的
+#   compileSdk 抬到了 37、Kotlin 抬到了 2.4.10（RN 自己钉的是 2.2.0）——
+#   这条链有没有问题，只有真编一次才知道。
 on:
   push:
     branches: ['**']
@@ -31,3 +40,61 @@ jobs:
       - name: 单元测试（加密向量与参考实现逐字节对答案）
         working-directory: client
         run: npx vitest run
+
+  android-compile:
+    name: Android 编译（Kotlin + AAR 元数据）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # ★ Gradle 缓存：这条 job 每次都要重跑配置 + Kotlin 编译，
+      #   不缓存的话每次都从零下载依赖（好几分钟）。
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('client/android/**/*.gradle', 'client/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      # ★ 跟 release.yml 同一套：不用 android-actions/setup-android（它要装
+      #   早已废弃的 `tools` 包，在新版 SDK 仓库上必然失败），只用 sdkmanager 补齐。
+      # ★ compileSdk 现在是 37 —— Android 从 37 起改用**次版本号平台包**，
+      #   仓库里没有 `platforms;android-37`，只有 `platforms;android-37.0`。
+      - name: 准备 Android SDK 组件
+        run: |
+          SDKMANAGER=$(find "${ANDROID_HOME}/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -1)
+          echo "sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          for pkg in "platform-tools" "platforms;android-37.0" "build-tools;37.0.0"; do
+            echo "== 安装 $pkg"
+            "$SDKMANAGER" "$pkg" || echo "   跳过 $pkg（仓库中不可用）"
+          done
+          echo "--- 安装后 platforms ---"; ls "${ANDROID_HOME}/platforms" 2>/dev/null || true
+
+      - name: 安装依赖
+        working-directory: client
+        run: npm ci --no-audit --no-fund
+
+      # ★ 只编 Kotlin，**不打包 APK** —— 打包要跑 NDK/C++（十分钟起），
+      #   而那部分跟本次改动毫无关系。`compileDebugKotlin` 会把该走的关键环节
+      #   全带上：Gradle 配置（KGP/AGP 能不能配起来）、`checkDebugAarMetadata`
+      #   （compileSdk 37 够不够、backdrop 的 AAR 能不能吃）、codegen、
+      #   Compose 编译器、以及我们那几个 .kt 本身。
+      #   要出包走 release.yml。
+      - name: 编译 Kotlin（含 AAR 元数据检查）
+        working-directory: client/android
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:compileDebugKotlin --no-daemon --stacktrace
