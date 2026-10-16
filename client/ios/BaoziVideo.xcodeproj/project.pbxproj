@@ -16,6 +16,10 @@
 		AB00000000000000000000B5 /* ScreenControlBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = AB00000000000000000000B3 /* ScreenControlBridge.m */; };
 		AB00000000000000000000C4 /* GlassView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00000000000000000000C2 /* GlassView.swift */; };
 		AB00000000000000000000C5 /* GlassViewManagerBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = AB00000000000000000000C3 /* GlassViewManagerBridge.m */; };
+		AB00000000000000000000F6 /* Ssdp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00000000000000000000F2 /* Ssdp.swift */; };
+		AB00000000000000000000F7 /* SsdpBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = AB00000000000000000000F3 /* SsdpBridge.m */; };
+		AB00000000000000000000F8 /* AirPlayButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00000000000000000000F4 /* AirPlayButton.swift */; };
+		AB00000000000000000000F9 /* AirPlayButtonBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = AB00000000000000000000F5 /* AirPlayButtonBridge.m */; };
 		AB00000000000000000000D4 /* TsFmp4Remuxer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00000000000000000000D2 /* TsFmp4Remuxer.swift */; };
 		AB00000000000000000000E4 /* Updater.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00000000000000000000E2 /* Updater.swift */; };
 		AB00000000000000000000E5 /* UpdaterBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = AB00000000000000000000E3 /* UpdaterBridge.m */; };
@@ -37,6 +41,10 @@
 		AB00000000000000000000B3 /* ScreenControlBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = ScreenControlBridge.m; path = BaoziVideo/Screen/ScreenControlBridge.m; sourceTree = "<group>"; };
 		AB00000000000000000000C2 /* GlassView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = GlassView.swift; path = BaoziVideo/Glass/GlassView.swift; sourceTree = "<group>"; };
 		AB00000000000000000000C3 /* GlassViewManagerBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = GlassViewManagerBridge.m; path = BaoziVideo/Glass/GlassViewManagerBridge.m; sourceTree = "<group>"; };
+		AB00000000000000000000F2 /* Ssdp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = Ssdp.swift; path = BaoziVideo/Cast/Ssdp.swift; sourceTree = "<group>"; };
+		AB00000000000000000000F3 /* SsdpBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = SsdpBridge.m; path = BaoziVideo/Cast/SsdpBridge.m; sourceTree = "<group>"; };
+		AB00000000000000000000F4 /* AirPlayButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AirPlayButton.swift; path = BaoziVideo/Cast/AirPlayButton.swift; sourceTree = "<group>"; };
+		AB00000000000000000000F5 /* AirPlayButtonBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = AirPlayButtonBridge.m; path = BaoziVideo/Cast/AirPlayButtonBridge.m; sourceTree = "<group>"; };
 		AB00000000000000000000D2 /* TsFmp4Remuxer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TsFmp4Remuxer.swift; path = BaoziVideo/Media/TsFmp4Remuxer.swift; sourceTree = "<group>"; };
 		AB00000000000000000000E2 /* Updater.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = Updater.swift; path = BaoziVideo/Updater/Updater.swift; sourceTree = "<group>"; };
 		AB00000000000000000000E3 /* UpdaterBridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = UpdaterBridge.m; path = BaoziVideo/Updater/UpdaterBridge.m; sourceTree = "<group>"; };
@@ -64,12 +72,24 @@
 			AB00000000000000000000A1 /* Media */,
 			AB00000000000000000000B1 /* Screen */,
 			AB00000000000000000000C1 /* Glass */,
+			AB00000000000000000000F1 /* Cast */,
 			AB00000000000000000000E1 /* Updater */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */,
 				13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */,
 			);
 			name = BaoziVideo;
+			sourceTree = "<group>";
+		};
+		AB00000000000000000000F1 /* Cast */ = {
+			isa = PBXGroup;
+			children = (
+				AB00000000000000000000F2 /* Ssdp.swift */,
+				AB00000000000000000000F3 /* SsdpBridge.m */,
+				AB00000000000000000000F4 /* AirPlayButton.swift */,
+				AB00000000000000000000F5 /* AirPlayButtonBridge.m */,
+			);
+			name = Cast;
 			sourceTree = "<group>";
 		};
 		AB00000000000000000000C1 /* Glass */ = {
@@ -310,6 +330,10 @@
 				AB00000000000000000000B5 /* ScreenControlBridge.m in Sources */,
 				AB00000000000000000000C4 /* GlassView.swift in Sources */,
 				AB00000000000000000000C5 /* GlassViewManagerBridge.m in Sources */,
+				AB00000000000000000000F6 /* Ssdp.swift in Sources */,
+				AB00000000000000000000F7 /* SsdpBridge.m in Sources */,
+				AB00000000000000000000F8 /* AirPlayButton.swift in Sources */,
+				AB00000000000000000000F9 /* AirPlayButtonBridge.m in Sources */,
 				AB00000000000000000000D4 /* TsFmp4Remuxer.swift in Sources */,
 				AB00000000000000000000E4 /* Updater.swift in Sources */,
 				AB00000000000000000000E5 /* UpdaterBridge.m in Sources */,

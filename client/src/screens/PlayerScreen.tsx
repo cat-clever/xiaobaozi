@@ -25,11 +25,25 @@ import type { VideoRef } from 'react-native-video';
 import { detail as loadDetail } from '../api/aggregator';
 import * as s1 from '../api/source1';
 import {
+  castSourceForSource1,
+  castSourceForSource2Candidate,
   resolveSource1,
   resolveSource2Candidate,
   source2Candidates,
 } from '../media/streamResolver';
+import type { CastSource } from '../media/streamResolver';
 import { shutdownMediaServer } from '../media/mediaServer';
+import {
+  discoverDlnaDevices,
+  dlnaCast,
+  dlnaPause,
+  dlnaPlay,
+  dlnaStatus,
+  dlnaStop,
+} from '../cast/dlna';
+import { CastSheet } from '../components/CastSheet';
+import type { ActiveCast } from '../components/CastSheet';
+import type { CastDevice, CastTransportState } from '../cast/types';
 import {
   applyBrightness,
   applyOrientation,
@@ -252,6 +266,13 @@ function PlayerView({
 
   // 源1：线路表；源2：清晰度走 s2Quality，拿回来的是**分段列表**
   const [s1Lines, setS1Lines] = useState<PlayLine[]>([]);
+  /**
+   * 源1 的**原始**线路表。
+   *
+   * ★ `s1Lines` 是筛过"可播"的那份，投屏准入要看原始 `kind`
+   *   （直投还是转发由它决定，见 `streamResolver` 的 `castSourceForSource1`）。
+   */
+  const [s1RawLines, setS1RawLines] = useState<PlayLine[]>([]);
   const [pickIdx, setPickIdx] = useState(0);
   /**
    * 源2 的清晰度档位。
@@ -271,6 +292,18 @@ function PlayerView({
     [],
   );
   const [segIdx, setSegIdx] = useState(0);
+
+  // ---------- 投屏 ----------
+  const [castOpen, setCastOpen] = useState(false);
+  const [castDevices, setCastDevices] = useState<CastDevice[]>([]);
+  const [castScanning, setCastScanning] = useState(false);
+  const [castError, setCastError] = useState<string | null>(null);
+  /** 点了但还没投上的那一台 —— 那一行转圈 */
+  const [castConnectingId, setCastConnectingId] = useState<string | null>(null);
+  const [castActive, setCastActive] = useState<ActiveCast | null>(null);
+  const [castTransport, setCastTransport] = useState<CastTransportState | null>(null);
+  /** 投屏用的那份地址。转发模式底下挂着一个本地会话，停投时必须关掉 */
+  const castSourceRef = useRef<CastSource | null>(null);
 
   const [paused, setPaused] = useState(false);
   const [rate, setRate] = useState(1);
@@ -389,6 +422,7 @@ function PlayerView({
           if (!alive) return;
           const usable = lines.filter(l => l.playable && !l.note);
           setS1Lines(usable);
+          setS1RawLines(lines);
           const resolved = await resolveSource1(lines, usable[pickIdx] ?? null);
           if (alive) setStream(resolved);
         } else {
@@ -442,6 +476,113 @@ function PlayerView({
       void current?.dispose?.();
     };
   }, [stream]);
+
+  // ---------- 投屏 ----------
+
+  /** 扫一遍局域网。**扫描期间再点刷新就忽略**，别叠着扫 */
+  const scanCastDevices = useCallback(async () => {
+    setCastScanning(true);
+    setCastError(null);
+    try {
+      const list = await discoverDlnaDevices(4000);
+      setCastDevices(list);
+    } catch (err) {
+      setCastError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCastScanning(false);
+    }
+  }, []);
+
+  const openCast = useCallback(() => {
+    setCastOpen(true);
+    void scanCastDevices();
+  }, [scanCastDevices]);
+
+  /** 把当前这一集投到某台设备上 */
+  const startCast = useCallback(
+    async (device: CastDevice) => {
+      setCastConnectingId(device.id);
+      setCastError(null);
+      let source: CastSource | null = null;
+      try {
+        // ★ 准入在 `streamResolver` 里判：能直投的直投，其余走手机转发（§5.5.3）
+        source =
+          detail.sourceId === 's1'
+            ? await castSourceForSource1(s1RawLines, s1Lines[pickIdx] ?? null)
+            : await castSourceForSource2Candidate(s2Segments[segIdx] ?? {});
+
+        const title = `${detail.name} ${episode?.title ?? ''}`.trim();
+        await dlnaCast(device, source.url, title);
+
+        // 投上了才把旧的那份收掉（失败的话旧的还在用，别提前拆）
+        await castSourceRef.current?.dispose?.();
+        castSourceRef.current = source;
+        setCastActive({ device, direct: source.direct, lineName: source.lineName });
+        // 本地这路停下来 —— 同一个片子两边一起放没有意义
+        setPaused(true);
+      } catch (err) {
+        // ★ 失败要把**这次**可能已经起来的转发会话收掉，别漏一个后台服务
+        await source?.dispose?.();
+        setCastError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setCastConnectingId(null);
+      }
+    },
+    [detail, s1RawLines, s1Lines, pickIdx, s2Segments, segIdx, episode],
+  );
+
+  const stopCast = useCallback(async () => {
+    const active = castActive;
+    const source = castSourceRef.current;
+    castSourceRef.current = null;
+    setCastActive(null);
+    setCastTransport(null);
+    try {
+      if (active) await dlnaStop(active.device);
+    } catch {
+      // 设备可能已经离线/关机 —— 本地该收的照收，不因为远端没响应就卡住
+    }
+    await source?.dispose?.();
+    setPaused(false);
+  }, [castActive]);
+
+  const toggleCastPlay = useCallback(async () => {
+    if (!castActive) return;
+    const playing = castTransport?.state === 'playing';
+    try {
+      if (playing) await dlnaPause(castActive.device);
+      else await dlnaPlay(castActive.device);
+    } catch (err) {
+      setCastError(err instanceof Error ? err.message : String(err));
+    }
+  }, [castActive, castTransport]);
+
+  /**
+   * 投屏期间每 4 秒问一次设备状态（遥控器要知道"现在是播还是停"）。
+   *
+   * ★ 问不到就**保持上一次的状态**，别把 UI 打空 —— 电视响应慢是常态。
+   */
+  useEffect(() => {
+    if (!castActive) return undefined;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const state = await dlnaStatus(castActive.device);
+        if (alive) setCastTransport(state);
+      } catch {
+        // 保持上一次
+      }
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), 4000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [castActive]);
+
+  // 离开播放页：转发会话要收掉（不然本地服务会一直开着）
+  useEffect(() => () => void castSourceRef.current?.dispose?.(), []);
 
   // 离开播放页就把本地媒体服务整个收掉（文档 §6.3：仅播放期间存活）
   useEffect(() => () => void shutdownMediaServer(), []);
@@ -1006,7 +1147,26 @@ function PlayerView({
           mini && { transform: miniOffset.getTranslateTransform() },
         ]}
       >
-        {stream ? (
+        {/*
+          ★ 投屏中就把本地这一路停掉、换成一张状态卡：
+            同一个片子手机和电视一起放没有意义，而且转发模式下
+            两路一起取流只会互相抢带宽。
+        */}
+        {castActive ? (
+          <View style={styles.castStage}>
+            <Text style={styles.castStageTitle} numberOfLines={2}>
+              正在投屏到 {castActive.device.name}
+            </Text>
+            <Text style={styles.castStageHint}>
+              {castActive.direct
+                ? '直投 · 手机可以息屏、可以退出 App'
+                : '经手机转发 · 投屏期间请别息屏或退出 App'}
+            </Text>
+            <Pressable style={styles.castStageBtn} onPress={openCast}>
+              <Text style={styles.castStageBtnText}>投屏控制</Text>
+            </Pressable>
+          </View>
+        ) : stream ? (
           <Video
             ref={videoRef}
             source={{ uri: stream.streamUrl, headers: stream.headers }}
@@ -1166,6 +1326,14 @@ function PlayerView({
               <Text style={styles.title} numberOfLines={1}>
                 {detail.name} · {episode?.title ?? ''}
               </Text>
+              {/* 投屏入口（文档 §5.5.5：播放器右上角常驻） */}
+              <Pressable onPress={openCast} style={styles.iconBtn} hitSlop={8}>
+                <Text
+                  style={[styles.castText, castActive && styles.castTextActive]}
+                >
+                  {castActive ? '投屏中' : '投屏'}
+                </Text>
+              </Pressable>
             </View>
 
             <View
@@ -1462,6 +1630,24 @@ function PlayerView({
           </ScrollView>
         </View>
       ) : null}
+
+      {/* 投屏设备抽屉。★ 小窗模式下不弹 —— 小窗时用户在看别处 */}
+      {!mini ? (
+        <CastSheet
+          visible={castOpen}
+          devices={castDevices}
+          scanning={castScanning}
+          error={castError}
+          active={castActive}
+          connectingId={castConnectingId}
+          transport={castTransport}
+          onClose={() => setCastOpen(false)}
+          onRefresh={() => void scanCastDevices()}
+          onPick={device => void startCast(device)}
+          onStop={() => void stopCast()}
+          onTogglePlay={() => void toggleCastPlay()}
+        />
+      ) : null}
     </View>
   );
 }
@@ -1601,6 +1787,35 @@ const makeStyles = (color: Palette) =>
       backgroundColor: 'rgba(0,0,0,0.45)',
     },
     title: { color: '#fff', fontSize: 14, marginLeft: space.sm, flex: 1 },
+    castText: { color: '#fff', fontSize: 13 },
+    castTextActive: { color: color.accent, fontWeight: '700' },
+    castStage: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: space.xl,
+    },
+    castStageTitle: {
+      color: '#fff',
+      fontSize: 16,
+      fontWeight: '600',
+      textAlign: 'center',
+    },
+    castStageHint: {
+      color: 'rgba(255,255,255,0.72)',
+      fontSize: 12,
+      marginTop: space.sm,
+      textAlign: 'center',
+      lineHeight: 18,
+    },
+    castStageBtn: {
+      marginTop: space.lg,
+      paddingHorizontal: space.lg,
+      paddingVertical: space.sm,
+      borderRadius: radius.pill,
+      backgroundColor: 'rgba(255,255,255,0.14)',
+    },
+    castStageBtnText: { color: '#fff', fontSize: 14 },
     bottomBar: {
       position: 'absolute',
       left: 0,

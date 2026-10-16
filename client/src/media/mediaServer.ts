@@ -34,7 +34,16 @@ export interface MediaSessionConfig extends MediaNativeConfig {
   playlist: { inheritQuery: boolean } | null;
 }
 
-let serverPromise: Promise<{ port: number; token: string }> | null = null;
+interface ServerInfo {
+  port: number;
+  token: string;
+  /** 本机局域网地址；空串 = 没有局域网（投屏用不了，本地播放不受影响） */
+  lanHost: string;
+}
+
+let serverPromise: Promise<ServerInfo> | null = null;
+/** 服务起来之后缓存的局域网地址 —— `currentLanHost()` 要能同步问它 */
+let lanHostCache = '';
 let unsubscribe: (() => void) | null = null;
 let sequence = 0;
 
@@ -141,7 +150,7 @@ export class MediaSession {
 }
 
 /** 起服务（幂等）。失败会抛，由上层决定退回直连 */
-async function ensureServer(): Promise<{ port: number; token: string }> {
+async function ensureServer(): Promise<ServerInfo> {
   if (!MediaServerNative) throw new Error('本地媒体服务未接入（原生模块缺失）');
   if (!serverPromise) {
     serverPromise = MediaServerNative.start().catch((err: unknown) => {
@@ -152,6 +161,11 @@ async function ensureServer(): Promise<{ port: number; token: string }> {
       const sub = onPlaylistRequest(handlePlaylistRequest);
       unsubscribe = sub ? () => sub.remove() : null;
     }
+    // 把局域网地址顺手记下来，投屏那边要同步问（`currentLanHost`）
+    serverPromise = serverPromise.then((info) => {
+      lanHostCache = info.lanHost || '';
+      return info;
+    });
   }
   return serverPromise;
 }
@@ -180,11 +194,25 @@ function handlePlaylistRequest(event: PlaylistRequestEvent): void {
   void MediaServerNative?.respondPlaylist(event.reqId, output);
 }
 
-/** 开一个播放会话。调用方负责在离开播放页时 `close()` */
-export async function openSession(config: MediaSessionConfig): Promise<MediaSession> {
-  const { port, token } = await ensureServer();
+/**
+ * 开一个播放会话。调用方负责在离开播放页时 `close()`。
+ *
+ * `preferLan` 只在**投屏**时为 true（见 `cast/source.ts`）：
+ *   - `false`（默认，本地播放）：地址用**回环** —— 行为跟投屏功能加进来之前
+ *     **一模一样**，一点没动
+ *   - `true`（投屏）：地址用**局域网** —— 接收端取不到手机的 `127.0.0.1`
+ *
+ * ★ 拿不到局域网地址时，投屏这条也会老实退回回环；调用方要自己判一次
+ *   "这个地址电视取不取得到"（`cast/source.ts` 会看 `currentLanHost()`）。
+ */
+export async function openSession(
+  config: MediaSessionConfig,
+  preferLan = false,
+): Promise<MediaSession> {
+  const { port, token, lanHost } = await ensureServer();
   const id = `s${(sequence += 1)}`;
-  const session = new MediaSession(id, `http://127.0.0.1:${port}/m/${token}/${id}`, config);
+  const host = preferLan && lanHost ? lanHost : '127.0.0.1';
+  const session = new MediaSession(id, `http://${host}:${port}/m/${token}/${id}`, config);
 
   // ★ 先登记再通知原生 —— 万一播放列表请求在原生回话前就进来，
   //   `handlePlaylistRequest` 得能查到会话
@@ -216,6 +244,15 @@ export async function shutdownMediaServer(): Promise<void> {
     // 忽略
   }
   serverPromise = null;
+  lanHostCache = '';
+}
+
+/**
+ * 本机当前的局域网地址（投屏要用）。空串 = 没局域网 / 服务没起来。
+ * ★ 纯查询，不触发起服务。
+ */
+export function currentLanHost(): string {
+  return lanHostCache;
 }
 
 export { isMediaServerAvailable };

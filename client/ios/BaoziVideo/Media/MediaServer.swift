@@ -79,6 +79,45 @@ final class MediaServer: RCTEventEmitter {
     return URLSession(configuration: configuration)
   }()
 
+  /**
+   找一个**局域网** IPv4。
+   
+   * 优先 `en*` / `bridge*`（Wi-Fi 与以太网就是它们），其次其它非回环网卡；
+     跳过 `utun*` / `lo*`（VPN 隧道的地址局域网里根本不可达）。
+   * 排除 `127.*` 与 `169.254.*`（回环 / 链路本地，都不可用）。
+   * 出任何问题都回空串 —— 投屏用不了，但本地播放一点不受影响。
+   */
+  static func lanAddress() -> String {
+    var preferred = ""
+    var fallback = ""
+    var head: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&head) == 0, let first = head else { return "" }
+    defer { freeifaddrs(head) }
+    var cursor: UnsafeMutablePointer<ifaddrs>? = first
+    while let current = cursor {
+      let entry = current.pointee
+      if let addr = entry.ifa_addr, addr.pointee.sa_family == sa_family_t(AF_INET) {
+        let name = String(cString: entry.ifa_name)
+        var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+        if getnameinfo(addr, socklen_t(addr.pointee.sa_len),
+                       &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
+          let ip = String(cString: host)
+          let usable = !ip.hasPrefix("127.") && !ip.hasPrefix("169.254.")
+          if usable {
+            if name.hasPrefix("en") || name.hasPrefix("bridge") {
+              if preferred.isEmpty { preferred = ip }
+            } else if !name.hasPrefix("utun") && !name.hasPrefix("lo")
+                        && fallback.isEmpty {
+              fallback = ip
+            }
+          }
+        }
+      }
+      cursor = entry.ifa_next
+    }
+    return preferred.isEmpty ? fallback : preferred
+  }
+
   /// 播放列表地址（`.m3u8`）—— 转封装只作用于媒体分片，播放列表照旧走代理
   static func isPlaylistUrl(_ target: String) -> Bool {
     target.components(separatedBy: "?").first?.lowercased().hasSuffix(".m3u8") ?? false
@@ -97,14 +136,24 @@ final class MediaServer: RCTEventEmitter {
   @objc func start(_ resolve: @escaping RCTPromiseResolveBlock,
                    rejecter reject: @escaping RCTPromiseRejectBlock) {
     if listener != nil {
-      resolve(["port": Int(port), "token": token])
+      resolve(["port": Int(port), "token": token, "lanHost": Self.lanAddress()])
       return
     }
 
     let params = NWParameters.tcp
-    // ★ 只绑回环 —— 不充当局域网内其他设备的通用代理（文档 §6.3 的安全边界）。
-    //   将来做投屏再按需绑局域网网卡，届时只改这一处。
-    params.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: .any)
+    // ★★ 有局域网就绑**所有网卡**（不指定 requiredLocalEndpoint = 0.0.0.0），
+    //   没有就只绑回环。
+    //
+    //   为什么（文档 §6.3 寻址策略）：投屏时电视要能取到流，而它取不到手机的
+    //   `127.0.0.1` —— 投屏地址必须是局域网地址。绑所有网卡之后
+    //   **回环与局域网同时可达**：本地播放仍旧走回环（地址不变、行为不变），
+    //   投屏才用局域网地址。
+    //
+    //   安全边界没松：随机端口 + 一次性 token 走 URL 路径（`/m/<token>/<sid>`），
+    //   而且**只在播放/投屏期间存活**。
+    if Self.lanAddress().isEmpty {
+      params.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: .any)
+    }
     params.allowLocalEndpointReuse = true
 
     let listener: NWListener
@@ -154,7 +203,7 @@ final class MediaServer: RCTEventEmitter {
 
     self.listener = listener
     self.token = UUID().uuidString.replacingOccurrences(of: "-", with: "")
-    resolve(["port": Int(port), "token": token])
+    resolve(["port": Int(port), "token": token, "lanHost": Self.lanAddress()])
   }
 
   @objc func stop(_ resolve: @escaping RCTPromiseResolveBlock,

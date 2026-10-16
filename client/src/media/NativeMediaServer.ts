@@ -10,6 +10,13 @@ import type { EmitterSubscription } from 'react-native';
 export interface MediaServerStartResult {
   port: number;
   token: string;
+  /**
+   * 本机的**局域网**地址（IPv4）。拿不到就是空串。
+   *
+   * ★ 投屏必须用它 —— 电视取不到手机的 `127.0.0.1`（文档 §6.3）。
+   *   本地播放**不用**它（照旧走回环），所以拿不到也不影响任何现有功能。
+   */
+  lanHost: string;
 }
 
 /** 原生下发给 JS 的播放列表重写请求 */

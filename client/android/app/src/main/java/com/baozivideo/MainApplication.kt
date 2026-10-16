@@ -5,6 +5,7 @@ import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
 import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
+import com.baozivideo.cast.CastPackage
 import com.baozivideo.glass.GlassPackage
 import com.baozivideo.media.MediaServerPackage
 import com.baozivideo.screen.ScreenControlPackage
@@ -22,6 +23,7 @@ class MainApplication : Application(), ReactApplication {
           add(MediaServerPackage())
           add(ScreenControlPackage())
           add(GlassPackage())
+          add(CastPackage())
           add(UpdaterPackage())
         },
     )

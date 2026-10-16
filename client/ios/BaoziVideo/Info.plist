@@ -40,6 +40,14 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<!--
+	  ★★ 投屏发现（SSDP 组播）必须声明这一条。
+	     iOS 14 起本地网络访问要用户授权：**没有这个键，系统会静默拒绝**
+	     组播收发与对局域网地址的请求 —— 表现是"一个设备都发现不了"，
+	     而且不报错、不弹窗，极难排查。
+	-->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>用于发现同一 Wi-Fi 下的电视、盒子等投屏设备。</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string></string>
 	<key>UILaunchStoryboardName</key>

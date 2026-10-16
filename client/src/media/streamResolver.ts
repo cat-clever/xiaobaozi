@@ -16,7 +16,7 @@
 import { BADCI, MEDIA_UA } from '../api/source1/constants';
 import * as s1 from '../api/source1';
 import * as s2 from '../api/source2';
-import { openSession } from './mediaServer';
+import { currentLanHost, openSession } from './mediaServer';
 import type { MediaSessionConfig } from './mediaServer';
 import { signRuleFor } from './segmentSigner';
 import type { Episode, PlayLine, ResolvedMediaStream } from '../types/schema';
@@ -188,4 +188,127 @@ export async function resolveSource2(
   const first = items.find((it) => it.playUrl);
   if (!first) throw new Error('没有拿到播放地址（该集可能受限或上游抖动）');
   return resolveSource2Candidate(first);
+}
+
+// ------------------------------------------------------------------ 投屏
+
+/**
+ * 交给接收端的一份地址（文档 §5.5）。
+ *
+ * ★ `direct` 是个**很重要的区别**，UI 上要如实告诉用户：
+ *   - `true`（直投）：地址是裸直链，电视自己去 CDN 取流 ——
+ *     **手机可以息屏、可以退出 App**，投屏不受影响
+ *   - `false`（转发兜底）：流经手机的本地媒体服务 ——
+ *     **手机不能休眠、不能退出 App**，否则投屏立刻断
+ */
+export interface CastSource {
+  /** 交给电视的地址 */
+  url: string;
+  format: 'hls' | 'mp4';
+  /** 见上 */
+  direct: boolean;
+  /** 这条线路的名字，UI 上显示"正在投屏 · 线路名" */
+  lineName: string;
+  /** 结束投屏时调；转发模式要顺带把本地会话关掉 */
+  dispose: () => Promise<void>;
+}
+
+/**
+ * 源1：挑一条线路，决定**直投还是转发**（文档 §5.5.3 的准入表）。
+ *
+ * | 线路 | 接收端能直接取吗 | 结论 |
+ * | :--- | :--- | :--- |
+ * | `m3u8` | 通常是裸直链 | **直投** |
+ * | `official` | 第三方解析出来的多半也是裸直链 | **直投** |
+ * | `mirror` | CDN 对 UA 做白名单，电视不带 `Mozi` 必 403 | 转发 |
+ * | `signed` | 还要逐分片现算 `wsSecret` | 转发 |
+ *
+ * ★ 判错的代价是"投过去播不了"，所以这里**宁可多走转发**：
+ *   转发一定能播（我们自己取流），只是手机不能息屏。直投只在确实裸的线路上用。
+ */
+export async function castSourceForSource1(
+  lines: PlayLine[],
+  preferred?: PlayLine | null,
+): Promise<CastSource> {
+  const line = preferred ?? pickPlayableLine(lines);
+  if (!line) {
+    throw new Error(
+      hasOnlyBackup(lines)
+        ? '这批线路里只有「备用高清」有地址，那是 App 内置 P2P 客户端才取得动的兜底线，投屏也取不到。'
+        : '这些线路当前都播不了，换一条再投。',
+    );
+  }
+
+  const target = line.kind === 'official' ? await s1.resolveOfficialLine(line) : line.url;
+  const format = formatOf(target);
+  const bare = line.kind === 'm3u8' || line.kind === 'official';
+
+  if (bare) {
+    return { url: target, format, direct: true, lineName: line.name, dispose: async () => {} };
+  }
+
+  return openCastProxy(
+    target,
+    {
+      headers: line.kind === 'signed' ? SOURCE1_SIGNED_HEADERS : SOURCE1_HEADERS,
+      sign: signRuleFor(line),
+      playlist: format === 'hls' ? { inheritQuery: false } : null,
+    },
+    format,
+    line.name,
+  );
+}
+
+/**
+ * 源2：一段 mp4 / m3u8。
+ *
+ * ★ **源2 一律走转发**：它的分片不带播放列表的 query，电视直取会被 CDN
+ *   限速到几乎不下发（实测 20 秒一个字节都没下来，见 `playlistRewriter`）。
+ *   必须由本地服务补 query 再喂给电视。
+ */
+export async function castSourceForSource2Candidate(
+  item: Record<string, unknown>,
+): Promise<CastSource> {
+  const url = String(item.playUrl ?? '');
+  if (!url) throw new Error('这条清晰度没有播放地址');
+  const format = formatOf(url);
+  return openCastProxy(
+    url,
+    {
+      headers: SOURCE2_HEADERS,
+      sign: null,
+      playlist: format === 'hls' ? { inheritQuery: true } : null,
+    },
+    format,
+    String(item.qualityName ?? item.src ?? '默认线路'),
+  );
+}
+
+/**
+ * 起一个**局域网**会话，把地址交给电视。
+ *
+ * ★ 拿不到局域网地址就**明确失败**，不糊弄：电视取不到手机的 `127.0.0.1`，
+ *   给个回环地址过去只会得到一个"投过去一直转圈"的假象。
+ */
+async function openCastProxy(
+  target: string,
+  config: MediaSessionConfig,
+  format: 'hls' | 'mp4',
+  lineName: string,
+): Promise<CastSource> {
+  const session = await openSession(config, true);
+  // `openSession` 起来之后 `currentLanHost()` 才有值 —— 所以这里才判
+  if (!currentLanHost()) {
+    await session.close();
+    throw new Error(
+      '这台设备现在没有局域网地址（多半是没连 Wi-Fi），电视取不到转发的流。\n请让手机和电视连同一个 Wi-Fi 再试。',
+    );
+  }
+  return {
+    url: session.streamUrl(target, format),
+    format,
+    direct: false,
+    lineName,
+    dispose: () => session.close(),
+  };
 }

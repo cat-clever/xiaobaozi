@@ -12,7 +12,9 @@ import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.net.HttpURLConnection
+import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URL
@@ -75,9 +77,20 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
             return
         }
         try {
-            // ★ 只绑回环 —— 不充当局域网内其他设备的通用代理（文档 §6.3 的安全边界）。
-            //   将来做投屏再按需绑局域网网卡。
-            val socket = ServerSocket(0, BACKLOG, InetAddress.getByName(LOOPBACK))
+            // ★★ 有局域网就绑**所有网卡**（`0.0.0.0`），没有就只绑回环。
+            //
+            //   为什么（文档 §6.3 寻址策略）：投屏时电视要能取到流，而它取不到
+            //   手机的 `127.0.0.1` —— 所以投屏地址必须是局域网地址。
+            //   绑 `0.0.0.0` 之后**回环与局域网同时可达**：
+            //   本地播放仍旧走回环（地址不变、行为不变），投屏才用局域网地址。
+            //
+            //   安全边界没松：随机端口 + 一次性 token 走 URL 路径
+            //   （`/m/<token>/<sid>`），而且**只在播放/投屏期间存活**。
+            //   `lanAddress()` 拿不到地址时老实退回只绑回环。
+            val lan = lanAddress()
+            val bindAddr = if (lan.isNotEmpty()) null else InetAddress.getByName(LOOPBACK)
+            val socket = if (bindAddr == null) ServerSocket(0, BACKLOG)
+            else ServerSocket(0, BACKLOG, bindAddr)
             serverSocket = socket
             port = socket.localPort
             token = UUID.randomUUID().toString().replace("-", "")
@@ -165,6 +178,41 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
     private fun portInfo() = Arguments.createMap().apply {
         putInt("port", port)
         putString("token", token)
+        // ★ 局域网地址（拿不到就是空串，TS 侧会退回回环）
+        putString("lanHost", lanAddress())
+    }
+
+    /**
+     * 找一个**局域网** IPv4。
+     *
+     * ★ 优先 `wlan*` / `eth*`（真网卡），其次其它非回环网卡；跳过 `tun` / `ppp`
+     *   （VPN 隧道的地址局域网里根本不可达，给了反而把投屏带沟里）。
+     * ★ 排除 `169.254.*`（链路本地，没拿到 DHCP 时的兜底地址，不可用）。
+     * ★ 出任何问题都回空串 —— 投屏用不了，但本地播放一点不受影响。
+     */
+    private fun lanAddress(): String {
+        var preferred = ""
+        var fallback = ""
+        try {
+            for (nif in java.util.Collections.list(NetworkInterface.getNetworkInterfaces())) {
+                if (!nif.isUp || nif.isLoopback) continue
+                val name = nif.name.lowercase()
+                if (name.startsWith("tun") || name.startsWith("ppp")) continue
+                for (addr in java.util.Collections.list(nif.inetAddresses)) {
+                    if (addr.isLoopbackAddress || addr !is Inet4Address) continue
+                    val ip = addr.hostAddress ?: continue
+                    if (ip.startsWith("169.254.")) continue
+                    if (name.startsWith("wlan") || name.startsWith("eth") || name.startsWith("ap")) {
+                        if (preferred.isEmpty()) preferred = ip
+                    } else if (fallback.isEmpty()) {
+                        fallback = ip
+                    }
+                }
+            }
+        } catch (_: Throwable) {
+            // 拿不到就当没有局域网
+        }
+        return if (preferred.isNotEmpty()) preferred else fallback
     }
 
     private fun acceptLoop(socket: ServerSocket) {

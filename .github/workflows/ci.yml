@@ -98,3 +98,46 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew :app:compileDebugKotlin --no-daemon --stacktrace
+
+  ios-compile:
+    name: iOS 编译（Swift + ObjC）
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      # ★ 跟 android-compile 同一个理由：加投屏那批原生文件（`Cast/` 下四个）
+      #   之前，CI 压根不编 Swift —— 编不过要到打 tag 出包那一刻才发现。
+      #   ★ 新增原生文件**必须同时登记进 `project.pbxproj`**，漏了这条 job
+      #     也发现不了（没登记的文件根本不参与编译），所以 pbxproj 里那几个
+      #     UUID 得自己数清楚。
+      - name: 安装依赖
+        working-directory: client
+        run: npm ci --no-audit --no-fund
+
+      - name: 安装 CocoaPods 依赖
+        working-directory: client/ios
+        run: |
+          bundle install
+          bundle exec pod install
+
+      # ★ 只**编译**，不打包：`archive` 要走完整的 Release 流程（还要出 IPA），
+      #   这里要的只是"Swift / ObjC 编得过"。模拟器 SDK 顺带免掉签名。
+      - name: 编译（模拟器 SDK，不签名）
+        working-directory: client/ios
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -workspace BaoziVideo.xcworkspace \
+            -scheme BaoziVideo \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build

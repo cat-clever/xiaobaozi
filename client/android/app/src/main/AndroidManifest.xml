@@ -8,6 +8,23 @@
     -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!--
+      投屏发现（SSDP 组播）要拿 MulticastLock —— 不拿的话 Wi-Fi 芯片会把组播包
+      丢掉，只有「把响应发回组播组」的那类设备（不合规但真实存在）会收不到。
+      见 `cast/SsdpModule.kt`。
+    -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+
+    <!--
+      投屏要枚举局域网接口 / 判断当前连的是不是 Wi-Fi（有 Wi-Fi 才谈得上投屏）。
+      ★ `ACCESS_NETWORK_STATE` 是普通权限；下面那个 `NEARBY_WIFI_DEVICES` 是
+        Android 13+ 才有的，声明时带 `maxSdkVersion` 反而会让新系统拿不到 ——
+        所以**不声明**：我们只用 `WifiManager` 拿组播锁和 IP，不扫周边 Wi-Fi，
+        不属于它的管辖范围。
+    -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
     <application
       android:name=".MainApplication"
       android:label="@string/app_name"
