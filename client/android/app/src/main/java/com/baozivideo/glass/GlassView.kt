@@ -150,21 +150,22 @@ class GlassView(context: Context) : View(context) {
     //     （改 `theme/index.ts` 的 `bar` 时记得同步这里。）
     // 浅色里压一点（158 -> 132）：用户报"几乎白色"，就是白釉压不住，
     // 把糊过的**海报颜色**再放出来一点。
+    // more transparent scrim, let backdrop vibrancy show through (Kyant style)
     scrimPaint.color =
-      if (light) Color.argb(132, 255, 255, 255) else Color.argb(133, 16, 16, 22)
+      if (light) Color.argb(95, 255, 255, 255) else Color.argb(110, 16, 16, 22)
 
     // 上亮下暗的"厚度" + 上缘高光。值跟以前一样 —— 这层是**垫在衬底之上**的
     // 那点提亮，跟有没有真模糊无关。
     // 浅色的上亮下白再压一点（226 -> 180, 126 -> 90）……
-    val top = if (light) Color.argb(180, 255, 255, 255) else Color.argb(52, 255, 255, 255)
-    val bottom = if (light) Color.argb(90, 255, 255, 255) else Color.argb(24, 255, 255, 255)
+    val top = if (light) Color.argb(140, 255, 255, 255) else Color.argb(42, 255, 255, 255)
+    val bottom = if (light) Color.argb(50, 255, 255, 255) else Color.argb(18, 255, 255, 255)
     fillPaint.shader = LinearGradient(0f, 0f, 0f, height, top, bottom, Shader.TileMode.CLAMP)
 
     // ★ 顶边柔和**镜面反射**：真玻璃顶边的蓝/白渐变，
     //   只扫表面的前 22%
     sheenPaint.shader = LinearGradient(
       0f, 0f, 0f, height * 0.22f,
-      if (light) Color.argb(40, 255, 255, 255) else Color.argb(26, 255, 255, 255),
+      if (light) Color.argb(70, 255, 255, 255) else Color.argb(50, 255, 255, 255),
       Color.argb(0, 255, 255, 255),
       Shader.TileMode.CLAMP,
     )
@@ -173,12 +174,12 @@ class GlassView(context: Context) : View(context) {
     innerShadowPaint.shader = LinearGradient(
       0f, height * 0.72f, 0f, height,
       Color.argb(0, 0, 0, 0),
-      if (light) Color.argb(46, 0, 0, 0) else Color.argb(70, 0, 0, 0),
+      if (light) Color.argb(25, 0, 0, 0) else Color.argb(45, 0, 0, 0),
       Shader.TileMode.CLAMP,
     )
 
     highlightPaint.color =
-      if (light) Color.argb(190, 255, 255, 255) else Color.argb(118, 255, 255, 255)
+      if (light) Color.argb(220, 255, 255, 255) else Color.argb(135, 255, 255, 255)
 
     borderPaint.style = Paint.Style.STROKE
     borderPaint.strokeWidth = dp(0.5f)
@@ -211,8 +212,8 @@ class GlassView(context: Context) : View(context) {
     val r = min(cornerRadius, min(w, h) / 2f)
     val halfW = w / 2f
     val halfH = h / 2f
-    val band = min(halfH, dp(11f))
-    val strength = dp(4.0f)
+    val band = min(halfH, dp(14f))
+    val strength = dp(12f)
     val eps = 0.5f
 
     var i = 0
@@ -335,7 +336,7 @@ class GlassView(context: Context) : View(context) {
     }
 
     boxBlur(bitmap, 3)
-    saturate(bitmap, 1.18f)
+    saturate(bitmap, 1.45f)
     invalidate()
   }
 
