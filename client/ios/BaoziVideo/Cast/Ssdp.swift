@@ -74,6 +74,11 @@ enum SsdpDiscovery {
       if round < kRounds {
         sendSearch(fd: unicast)
         sendSearch(fd: group)
+        // ★★ 单播兜底：iOS 14+ 发组播要 multicast 权限，侧载包拿不到 ——
+        //   组播那条路会静默失败（sendto 返回 -1，没人看返回值）。
+        //   单播只受"本地网络"权限约束，所以直接把 M-SEARCH 打到网段里
+        //   每一台的 1900 端口。第 0 / 2 轮各扫一次，给慢设备留时间。
+        if round == 0 || round == 2 { sweepUnicast(fd: unicast) }
         round += 1
       }
       drain(fd: unicast, buffer: &buffer, into: &found)
@@ -142,6 +147,61 @@ enum SsdpDiscovery {
     return fd
   }
 
+  /**
+   * 把 M-SEARCH 打到本机所在网段的每一台设备（**单播**）。
+   *
+   * ★ 为什么要这条：iOS 14 起，往组播地址收发要
+   *   `com.apple.developer.networking.multicast` 权限。侧载 / 未签名包
+   *   拿不到（要 Apple 单独批），组播 `sendto` 直接失败 —— 而原来的代码
+   *   忽略了返回值，所以表现是"一个设备都搜不到"。单播走的是普通 UDP，
+   *   只要用户给了"本地网络"权限就行。
+   *
+   * ★ 只扫本机所在的 /24（最多 254 台），不扫 /16 —— 够用且不会刷屏。
+   *   另外补一包子网广播（有些设备只认广播）。
+   */
+  private static func sweepUnicast(fd: Int32) {
+    guard fd >= 0, let lan = lanIPv4() else { return }
+    let base = lan.ip & 0xFFFF_FF00
+    guard base != 0 else { return }
+    for host in UInt32(1)...UInt32(254) {
+      let target = base | host
+      if target == lan.ip { continue }
+      sendSearch(fd: fd, to: target)
+    }
+    let broadcast = (lan.ip & lan.mask) | ~lan.mask
+    if broadcast != 0 && broadcast != lan.ip {
+      sendSearch(fd: fd, to: broadcast)
+    }
+  }
+
+  /** 本机 Wi-Fi / 以太网的 IPv4 地址与掩码（host 序）。 */
+  private static func lanIPv4() -> (ip: UInt32, mask: UInt32)? {
+    var addrs: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&addrs) == 0, let first = addrs else { return nil }
+    defer { freeifaddrs(addrs) }
+
+    var cursor: UnsafeMutablePointer<ifaddrs>? = first
+    while let ptr = cursor {
+      let ifa = ptr.pointee
+      let name = String(cString: ifa.ifa_name)
+      if name == "en0" || name == "en1" {
+        if let sa = ifa.ifa_addr, sa.pointee.sa_family == sa_family_t(AF_INET) {
+          let rawIP = sa.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+            $0.pointee.sin_addr.s_addr
+          }
+          let rawMask = ifa.ifa_netmask?.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+            $0.pointee.sin_addr.s_addr
+          } ?? 0
+          let ip = UInt32(bigEndian: rawIP)
+          let mask = UInt32(bigEndian: rawMask)
+          if ip != 0 && mask != 0 { return (ip, mask) }
+        }
+      }
+      cursor = ifa.ifa_next
+    }
+    return nil
+  }
+
   private static func setReuse(_ fd: Int32) {
     var yes: Int32 = 1
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
@@ -155,12 +215,13 @@ enum SsdpDiscovery {
 
   // MARK: - 收发
 
-  private static func sendSearch(fd: Int32) {
+  /// `to` 传 host 序的 IPv4；不传就打组播组（原来的行为）。
+  private static func sendSearch(fd: Int32, to: UInt32? = nil) {
     guard fd >= 0 else { return }
     var dest = sockaddr_in()
     dest.sin_family = sa_family_t(AF_INET)
     dest.sin_port = kSsdpPort.bigEndian
-    dest.sin_addr.s_addr = inet_addr(kSsdpGroup)
+    dest.sin_addr.s_addr = to.map { $0.bigEndian } ?? inet_addr(kSsdpGroup)
     for target in kTargets {
       let text = "M-SEARCH * HTTP/1.1\r\n"
         + "HOST: \(kSsdpGroup):\(kSsdpPort)\r\n"

@@ -12,6 +12,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -170,6 +171,16 @@ export function CastSheet({
                   请确认手机和电视连的是同一个 Wi-Fi{'\n'}
                   电视上的「投屏 / 多屏互动 / Miracast」开关要打开
                 </Text>
+                {/*
+                  ★ iOS 14+ 发现设备要「本地网络」权限；侧载包第一次
+                    搜索时会弹窗，拒绝过就再也不弹了 —— 必须告诉用户去哪开。
+                */}
+                {Platform.OS === 'ios' ? (
+                  <Text style={styles.emptyHint}>
+                    iPhone 还要允许「本地网络」：{'\n'}
+                    设置 → 小包子影视 → 本地网络
+                  </Text>
+                ) : null}
               </View>
             ) : null}
           </ScrollView>
