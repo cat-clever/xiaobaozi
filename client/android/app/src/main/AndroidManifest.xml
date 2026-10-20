@@ -25,6 +25,25 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
+    <!--
+      转发投屏保活（见 `cast/RelayKeepAliveService.kt`）。
+
+      ★ 转发模式下流经手机的本地媒体服务：进程一被冻结，电视立刻断流
+        （2026-10-20 真机定位：端口还在监听、TCP 能连、一个字节都不回）。
+        前台服务 + 唤醒锁是唯一能让系统不冻进程的手段。
+
+      ★ Android 14+（targetSdk 36）起前台服务**必须**声明类型对应的权限，
+        类型在下面 <service> 的 `foregroundServiceType` 里。用 `mediaPlayback`
+        而不是 `dataSync`：后者在 Android 15 起有每天 6 小时上限。
+
+      ★ `POST_NOTIFICATIONS`（Android 13+）：不给也能跑，只是通知不显示。
+        不主动弹权限 —— 为一个"投屏时才有"的通知打断用户不值得。
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
       android:name=".MainApplication"
       android:label="@string/app_name"
@@ -54,6 +73,17 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent-filter>
       </activity>
+
+      <!--
+        转发投屏期间的保活服务。生命周期由 JS 控制
+        （`MediaServer.startRelayKeepAlive / stopRelayKeepAlive`），
+        只在**转发模式**投屏期间开着 —— 直投是电视自己去 CDN 取流，不需要。
+      -->
+      <service
+        android:name=".cast.RelayKeepAliveService"
+        android:exported="false"
+        android:foregroundServiceType="mediaPlayback"
+        android:stopWithTask="true" />
 
       <!--
         端内升级下载的 APK 要交给系统安装器，而 Android 7 起 `file://` 直接抛

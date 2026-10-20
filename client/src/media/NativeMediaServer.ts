@@ -78,6 +78,17 @@ export interface MediaServerNativeModule {
    *   还是"服务起来了但请求失败" —— 这两个计数能一眼分开（2026-10-16）。
    */
   stats?(): Promise<MediaServerStats>;
+  /**
+   * 转发投屏期间的保活（Android 前台服务 + PARTIAL_WAKE_LOCK）。
+   *
+   * ★ 只有**转发模式**需要：流从手机本地服务出去，进程一被系统冻结，
+   *   电视端立刻断流（端口还在监听、TCP 能连、却一个字节都不回）。
+   *   iOS 不实现（没有对应机制，投屏转发也只在 Android 上开放）。
+   *
+   * 声明成可选是为了容忍老版本原生包，调用前一律先判。
+   */
+  startRelayKeepAlive?(): Promise<void>;
+  stopRelayKeepAlive?(): Promise<void>;
 }
 
 /** 见 `MediaServerModule.kt` 的 `stats` */

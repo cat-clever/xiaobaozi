@@ -1,6 +1,9 @@
 package com.baozivideo.media
 
+import android.content.Intent
 import android.util.Base64
+import androidx.core.content.ContextCompat
+import com.baozivideo.cast.RelayKeepAliveService
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -192,7 +195,48 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
         }
         pending.clear()
         pool.shutdownNow()
+        // ★ 服务都没了，保活就没有意义 —— 别留一个前台服务/通知在后台
+        stopKeepAlive()
         promise.resolve(null)
+    }
+
+    // ---------------- 投屏保活 ----------------
+
+    /**
+     * 起一个前台服务 + PARTIAL_WAKE_LOCK，防止**转发模式**投屏期间进程被冻结。
+     *
+     * ★ 只由 JS 在「转发模式投屏成功前」调用；直投不需要（电视自己去 CDN 取流）。
+     * ★ 必须在 App 还在前台时调（用户点投屏那一刻）—— Android 12+ 不允许
+     *   从后台启动前台服务。
+     *
+     * 起不来会 reject：JS 据此**如实**告诉用户"保活没开，请别息屏"，
+     * 而不是假装开着。
+     */
+    @ReactMethod
+    fun startRelayKeepAlive(promise: Promise) {
+        try {
+            ContextCompat.startForegroundService(
+                reactContext,
+                Intent(reactContext, RelayKeepAliveService::class.java),
+            )
+            promise.resolve(null)
+        } catch (err: Exception) {
+            promise.reject("relay_keepalive_failed", err)
+        }
+    }
+
+    @ReactMethod
+    fun stopRelayKeepAlive(promise: Promise) {
+        stopKeepAlive()
+        promise.resolve(null)
+    }
+
+    private fun stopKeepAlive() {
+        try {
+            reactContext.stopService(Intent(reactContext, RelayKeepAliveService::class.java))
+        } catch (_: Exception) {
+            // 没在跑就没什么可停的
+        }
     }
 
     @ReactMethod
@@ -526,6 +570,7 @@ class MediaServerModule(private val reactContext: ReactApplicationContext) :
             // 忽略
         }
         pool.shutdownNow()
+        stopKeepAlive()
         super.invalidate()
     }
 

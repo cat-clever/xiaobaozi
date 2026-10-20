@@ -5,7 +5,9 @@
  * 并给一个遥控器。
  *
  * ★ 直投 / 转发**必须在界面上说清楚**（文档 §5.5.4 的"已知限制"）：
- *   转发模式流经手机，手机一休眠投屏就断 —— 不提示的话用户会以为是 App 坏了。
+ *   转发模式流经手机，进程一停投屏就断 —— 不提示的话用户会以为是 App 坏了。
+ *   现在转发投屏会起前台服务保活（`RelayKeepAliveService`），所以能息屏；
+ *   但**保活没起来**（老原生包 / 系统拒绝）时必须退回"别息屏"的提示。
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import {
@@ -29,6 +31,13 @@ import type { CastDevice, CastTransportState } from '../cast/types';
 export interface ActiveCast {
   device: CastDevice;
   direct: boolean;
+  /**
+   * 转发模式下**保活有没有真的开起来**（Android 前台服务 + 唤醒锁）。
+   *
+   * ★ 直投恒为 false（不需要）。保活没起来时界面必须提醒用户别息屏 ——
+   *   不能因为"我们调过"就假装开着了。
+   */
+  keepAlive: boolean;
   lineName: string;
   /**
    * **实际投给电视的那个地址**。
@@ -180,9 +189,13 @@ function CastingPanel({
       <Text style={styles.castingMeta}>
         {active.lineName} · {active.direct ? '直投' : '经手机转发'}
       </Text>
-      {/* ★ 转发模式必须把这条讲出来（文档 §5.5.4） */}
+      {/* ★ 转发模式必须把这条讲出来（文档 §5.5.4）—— 保活开没开决定说哪句 */}
       {!active.direct ? (
-        <Text style={styles.warn}>转发模式：投屏期间请别让手机息屏或退出 App</Text>
+        <Text style={styles.warn}>
+          {active.keepAlive
+            ? '转发模式：已开启后台保活，可以息屏；请别强行退出 App'
+            : '转发模式：投屏期间请别让手机息屏或退出 App'}
+        </Text>
       ) : null}
       {/*
         ★★ 投屏链路诊断。投屏"投上了但电视不动/播一秒就崩"时，界面之外什么

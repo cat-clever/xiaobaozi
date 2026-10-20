@@ -32,7 +32,11 @@ import {
   source2Candidates,
 } from '../media/streamResolver';
 import type { CastSource } from '../media/streamResolver';
-import { shutdownMediaServer } from '../media/mediaServer';
+import {
+  shutdownMediaServer,
+  startRelayKeepAlive,
+  stopRelayKeepAlive,
+} from '../media/mediaServer';
 import {
   discoverDlnaDevices,
   dlnaCast,
@@ -512,6 +516,11 @@ function PlayerView({
             : await castSourceForSource2Candidate(s2Segments[segIdx] ?? {});
 
         const title = `${detail.name} ${episode?.title ?? ''}`.trim();
+        // ★★ 转发模式下流经手机：投屏期间必须让进程活着，否则息屏/切后台
+        //   一被系统冻结，电视端立刻断流（2026-10-20 真机定位）。
+        //   直投不经过我们，不用起。
+        //   ★ 起不来也照投 —— 只是界面要如实提示"别息屏"。
+        const keepAlive = source.direct ? false : await startRelayKeepAlive();
         await dlnaCast(device, source.url, title);
 
         // 投上了才把旧的那份收掉（失败的话旧的还在用，别提前拆）
@@ -521,6 +530,7 @@ function PlayerView({
           device,
           direct: source.direct,
           lineName: source.lineName,
+          keepAlive,
           // 诊断用：电视不出画面时，用户能拿浏览器验证这个地址通不通
           url: source.url,
         });
@@ -529,12 +539,14 @@ function PlayerView({
       } catch (err) {
         // ★ 失败要把**这次**可能已经起来的转发会话收掉，别漏一个后台服务
         await source?.dispose?.();
+        // 已经有投屏在跑的话，保活是给它的，不能停
+        if (!castActive) await stopRelayKeepAlive();
         setCastError(err instanceof Error ? err.message : String(err));
       } finally {
         setCastConnectingId(null);
       }
     },
-    [detail, s1RawLines, s1Lines, pickIdx, s2Segments, segIdx, episode],
+    [detail, s1RawLines, s1Lines, pickIdx, s2Segments, segIdx, episode, castActive],
   );
 
   const stopCast = useCallback(async () => {
@@ -549,6 +561,7 @@ function PlayerView({
       // 设备可能已经离线/关机 —— 本地该收的照收，不因为远端没响应就卡住
     }
     await source?.dispose?.();
+    await stopRelayKeepAlive();
     setPaused(false);
   }, [castActive]);
 
@@ -587,8 +600,14 @@ function PlayerView({
     };
   }, [castActive]);
 
-  // 离开播放页：转发会话要收掉（不然本地服务会一直开着）
-  useEffect(() => () => void castSourceRef.current?.dispose?.(), []);
+  // 离开播放页：转发会话与保活都要收掉（不然本地服务/前台服务会一直开着）
+  useEffect(
+    () => () => {
+      void castSourceRef.current?.dispose?.();
+      void stopRelayKeepAlive();
+    },
+    [],
+  );
 
   // 离开播放页就把本地媒体服务整个收掉（文档 §6.3：仅播放期间存活）
   useEffect(() => () => void shutdownMediaServer(), []);
@@ -1166,7 +1185,9 @@ function PlayerView({
             <Text style={styles.castStageHint}>
               {castActive.direct
                 ? '直投 · 手机可以息屏、可以退出 App'
-                : '经手机转发 · 投屏期间请别息屏或退出 App'}
+                : castActive.keepAlive
+                  ? '经手机转发 · 已开启后台保活，可以息屏（别强行退出 App）'
+                  : '经手机转发 · 投屏期间请别息屏或退出 App'}
             </Text>
             <Pressable style={styles.castStageBtn} onPress={openCast}>
               <Text style={styles.castStageBtnText}>投屏控制</Text>

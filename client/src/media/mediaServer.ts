@@ -412,6 +412,37 @@ export async function openSession(
   return session;
 }
 
+/**
+ * 转发投屏期间让系统别冻住进程（Android 前台服务 + 唤醒锁）。
+ *
+ * ★ 返回**是否真的开起来了**：JS 侧据此决定界面怎么提示 ——
+ *   开起来了就可以说"可以息屏"，没开起来必须老老实实提醒"别息屏"。
+ *   起不来**不阻断投屏**，只是退回原来的行为。
+ *
+ * ★ 必须在 App 还处于前台时调用（用户点「投屏」那一刻）。
+ */
+export async function startRelayKeepAlive(): Promise<boolean> {
+  const native = MediaServerNative;
+  if (!native || !native.startRelayKeepAlive) return false;
+  try {
+    await native.startRelayKeepAlive();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 投屏结束 / 离开播放页时收掉保活（幂等） */
+export async function stopRelayKeepAlive(): Promise<void> {
+  const native = MediaServerNative;
+  if (!native || !native.stopRelayKeepAlive) return;
+  try {
+    await native.stopRelayKeepAlive();
+  } catch {
+    // 停不掉也没关系：`shutdownMediaServer()` 里原生 stop() 还会兜底停一次
+  }
+}
+
 /** 播放页离开时收摊 */
 export async function shutdownMediaServer(): Promise<void> {
   for (const session of Array.from(sessions.values())) {
