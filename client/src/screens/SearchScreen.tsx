@@ -2,13 +2,14 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
+  Platform,
   FlatList,
-  Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { Pressable } from '../components/FocusablePressable';
 import { hotSearch, searchAll } from '../api/aggregator';
 import { MediaCard } from '../components/MediaCard';
 import { pushSearchHistory, getSearchHistory } from '../utils/storage';
@@ -17,7 +18,8 @@ import type { Palette } from '../theme';
 import type { VodItem } from '../types/schema';
 
 const GAP = space.md;
-const COLUMNS = 3;
+/** 电视横屏宽，多放几列 */
+const COLUMNS = Platform.isTV ? 6 : 3;
 const CARD_WIDTH =
   (Dimensions.get('window').width - space.lg * 2 - GAP * (COLUMNS - 1)) / COLUMNS;
 

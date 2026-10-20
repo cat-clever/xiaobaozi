@@ -9,6 +9,7 @@ import {
   Animated,
   Dimensions,
   FlatList,
+  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -27,8 +28,8 @@ import type { HomeBlock } from '../api/aggregator';
 import type { SourceId, VodItem } from '../types/schema';
 
 const GAP = space.md;
-/** 一屏横向能看见几列 */
-const VISIBLE_COLUMNS = 3;
+/** 一屏横向能看见几列 —— 电视横屏宽，多放几列 */
+const VISIBLE_COLUMNS = Platform.isTV ? 6 : 3;
 /** 每个板块上下几排 */
 const ROWS = 2;
 /** 骨架屏先铺几个板块 */

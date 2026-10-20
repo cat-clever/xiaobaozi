@@ -8,14 +8,15 @@ import React, {
 import {
   ActivityIndicator,
   Dimensions,
+  Platform,
   FlatList,
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { Pressable } from '../components/FocusablePressable';
 import {
   SOURCE_LABEL,
   listByCategory,
@@ -36,7 +37,8 @@ import type { Palette } from '../theme';
 import type { SourceId, VodItem } from '../types/schema';
 
 const GAP = space.md;
-const COLUMNS = 3;
+/** 电视横屏宽，多放几列 */
+const COLUMNS = Platform.isTV ? 6 : 3;
 const CARD_WIDTH =
   (Dimensions.get('window').width - space.lg * 2 - GAP * (COLUMNS - 1)) /
   COLUMNS;

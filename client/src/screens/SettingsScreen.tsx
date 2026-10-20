@@ -1,13 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Switch,
   Text,
   View,
 } from 'react-native';
+import { Pressable } from '../components/FocusablePressable';
 
 import { GlassBox } from '../components/GlassBox';
 import { radius, space, useTheme } from '../theme';

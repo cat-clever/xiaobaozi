@@ -13,12 +13,12 @@ import React, { useMemo } from 'react';
 import {
   ActivityIndicator,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { Pressable } from './FocusablePressable';
 
 import { AirPlayButton, AIRPLAY_AVAILABLE } from './AirPlayButton';
 import { GlassBox } from './GlassBox';

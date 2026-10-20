@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
+import { Pressable } from './FocusablePressable';
 import { radius, space, useTheme } from '../theme';
 import type { Palette } from '../theme';
 import type { VodItem } from '../types/schema';

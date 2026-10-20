@@ -16,13 +16,13 @@ import {
   BackHandler,
   PanResponder,
   Platform,
-  Pressable,
   StatusBar,
   StyleSheet,
   Text,
   View,
   useWindowDimensions,
 } from 'react-native';
+import { Pressable } from './src/components/FocusablePressable';
 import type { LayoutChangeEvent } from 'react-native';
 import {
   SafeAreaProvider,
@@ -727,7 +727,7 @@ function AppShell(): React.JSX.Element {
                    （整条会鼓），再加一层缩放就是双重放大，反而更假。
             */}
             {realGlass ? (
-              <Pressable onPress={e => pressTabAt(e.nativeEvent.locationX)}>
+              <Pressable focusable={false} onPress={e => pressTabAt(e.nativeEvent.locationX)}>
                 {/* ★ 不传 `cornerRadius`：`LiquidGlassView` 没有这个属性，
                     圆角由 `styles.tabBar` 的 `borderRadius` 带过去
                     （见 `LiquidGlassView.mm` 的 `layoutSubviews`）。
@@ -749,7 +749,7 @@ function AppShell(): React.JSX.Element {
               /* ★ 这一层 `Animated.View`（JS 弹簧回弹）只在没有真玻璃时才用：
                   那种情况下按钮垫在玻璃上面、玻璃收不到触摸，全靠它补手感。 */
               <Animated.View style={{ transform: [{ scale: tabScale }] }}>
-                <Pressable onPress={e => pressTabAt(e.nativeEvent.locationX)}>
+                <Pressable focusable={false} onPress={e => pressTabAt(e.nativeEvent.locationX)}>
                   <GlassBox
                     style={styles.tabBar}
                     cornerRadius={radius.pill}

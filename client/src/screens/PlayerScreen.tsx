@@ -12,13 +12,13 @@ import {
   BackHandler,
   Image,
   PanResponder,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
   useWindowDimensions,
 } from 'react-native';
+import { Pressable } from '../components/FocusablePressable';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Video from 'react-native-video';
 import type { VideoRef } from 'react-native-video';
