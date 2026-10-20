@@ -19,8 +19,11 @@ class InputModeModule(reactContext: ReactApplicationContext) :
     override fun getName() = NAME
 
     private fun emit(remote: Boolean) {
-        if (!reactContext.hasActiveReactInstance()) return
-        reactContext
+        // ★ 属性名是 reactApplicationContext（ReactContextBaseJavaModule 的
+        //   protected getter），不是 reactContext —— 写错 CI 直接编译失败。
+        val context = reactApplicationContext
+        if (!context.hasActiveReactInstance()) return
+        context
             .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
             .emit(EVENT, Arguments.createMap().apply { putBoolean("remote", remote) })
     }
