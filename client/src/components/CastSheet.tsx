@@ -381,7 +381,9 @@ const makeStyles = (color: Palette) =>
       borderBottomColor: color.border,
     },
     airplayButton: { width: 40, height: 40 },
-    list: { marginTop: space.xs },
+    // ★ flexShrink 必须有：sheet 只有 maxHeight，不给 ScrollView 收缩的话
+    //   它会按内容高度撑开、被父级 overflow:hidden 裁掉，滚不动。
+    list: { marginTop: space.xs, flexShrink: 1 },
     listContent: { paddingBottom: space.sm },
     deviceRow: {
       flexDirection: 'row',
