@@ -99,30 +99,36 @@ export function CastSheet({
             </Pressable>
           </View>
 
-          {active ? (
-            <CastingPanel
-              active={active}
-              transport={transport}
-              styles={styles}
-              onTogglePlay={onTogglePlay}
-              onStop={onStop}
-            />
-          ) : null}
-
-          {/* AirPlay 是系统控件，只能把系统那枚按钮摆出来 */}
-          {AIRPLAY_AVAILABLE && !active ? (
-            <View style={styles.airplayRow}>
-              <View style={styles.deviceText}>
-                <Text style={styles.deviceName}>AirPlay</Text>
-                <Text style={styles.deviceMeta}>Apple TV、支持隔空播放的电视</Text>
-              </View>
-              <AirPlayButton style={styles.airplayButton} />
-            </View>
-          ) : null}
-
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-
+          {/*
+            ★ 整个正文（投屏中面板 + 设备列表）放进**同一个 ScrollView**。
+              原来只给设备列表套 ScrollView，投屏中面板（诊断信息很长）
+              一撑，`sheet` 的 maxHeight 70% 直接把列表裁掉 —— 投屏时
+              根本看不到/选不了别的设备（2026-10-20 用户反馈）。
+          */}
           <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
+            {active ? (
+              <CastingPanel
+                active={active}
+                transport={transport}
+                styles={styles}
+                onTogglePlay={onTogglePlay}
+                onStop={onStop}
+              />
+            ) : null}
+
+            {/* AirPlay 是系统控件，只能把系统那枚按钮摆出来 */}
+            {AIRPLAY_AVAILABLE && !active ? (
+              <View style={styles.airplayRow}>
+                <View style={styles.deviceText}>
+                  <Text style={styles.deviceName}>AirPlay</Text>
+                  <Text style={styles.deviceMeta}>Apple TV、支持隔空播放的电视</Text>
+                </View>
+                <AirPlayButton style={styles.airplayButton} />
+              </View>
+            ) : null}
+
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+
             {devices.map(device => {
               const busy = connectingId === device.id;
               return (

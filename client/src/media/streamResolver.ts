@@ -313,17 +313,14 @@ async function openCastProxy(
     );
   }
 
-  // ★★ 投屏也要探一次要不要转封装，而且**必须赶在电视取播放列表之前**。
+  // ★★ 投屏**不再转 fMP4**（2026-10-20 用户明确要求）。
   //
-  //   接收端（ADisplay）只看播放列表里第一个分片行的后缀决定要不要自己接手
-  //   换封装：`.ts` 就判成 HEVC-in-TS，走它那条"全量下载 + FFmpeg 重封装"的
-  //   路 —— 而那条路只为 Apple 的 AVPlayer 写的，在 Android 电视上跑会崩
-  //   （2026-10-16 真机踩到：281 份分片下去，接收端直接退出）。
+  //   H.264 的转封装分支是这一轮新写的、从没在真机上验证过，实机会丢帧：
+  //   电视上表现为"进度条在走、画面冻住"。与其继续修这条没验证过的路，
+  //   不如把原始 TS 直接交给接收端 —— 内容本身是好的（VLC 能播）。
   //
-  //   我们自己先转好，投过去就是**真 fMP4**：接收端判成 FragmentedMp4 ->
-  //   整条换封装路径不进入。Android 不崩、Apple 也能播。
-  //   转不动（H.264 线路、mp4 线路）就照常直通，行为与从前一致。
-  if (format === 'hls') await session.prepareRemux(target);
+  //   ★ 注意：`forCast` 的分片命名仍会去掉 `.ts` 后缀（见 `segmentNaming.ts`），
+  //     避免接收端误判成 HEVC-in-TS 去走它自己那条会崩的换封装路径。
   return {
     url: session.streamUrl(target, format),
     format,
