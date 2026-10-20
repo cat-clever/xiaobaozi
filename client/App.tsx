@@ -20,6 +20,7 @@ import {
   StyleSheet,
   Text,
   View,
+  findNodeHandle,
   useWindowDimensions,
 } from 'react-native';
 import { Pressable } from './src/components/FocusablePressable';
@@ -138,6 +139,28 @@ function AppShell(): React.JSX.Element {
   );
   const [tab, setTab] = useState<Tab>('home');
   const [route, setRoute] = useState<Route>({ name: 'tabs' });
+  /**
+   * ★★ TV 焦点图：三个 Tab 的 native tag。
+   *
+   *   只靠 Android 的空间焦点搜索时，从第二个 Tab 往右会被右上角「设置」
+   *   抢走（用户 2026-10-20 真机反馈）。拿到 tag 后给 Tab 显式挂
+   *   `nextFocusLeft/Right`，方向键就只会在三个 Tab 之间走。
+   */
+  const tabRefs = useRef<Array<React.ElementRef<typeof Pressable> | null>>([]);
+  const [tabTags, setTabTags] = useState<number[]>([]);
+  useEffect(() => {
+    const tags: number[] = [];
+    for (const ref of tabRefs.current) {
+      const tag = ref ? findNodeHandle(ref) : null;
+      if (tag == null) return; // 还没挂上，下一次渲染再说
+      tags.push(tag);
+    }
+    setTabTags(prev =>
+      prev.length === tags.length && prev.every((t, i) => t === tags[i])
+        ? prev
+        : tags,
+    );
+  }, [tab]);
   const [session, setSession] = useState<PlaySession | null>(null);
   /** 播放器是不是收成了角落里的悬浮小窗 */
   const [mini, setMini] = useState(false);
@@ -622,11 +645,17 @@ function AppShell(): React.JSX.Element {
   const tabButtons = TABS.map((item, index) => (
     <TabButton
       key={item.id}
+      ref={node => {
+        tabRefs.current[index] = node;
+      }}
       label={item.label}
       active={tab === item.id}
       passive={liquidGlass}
       // ★ TV 上初始/返回时焦点落在当前 Tab 上，而不是被右上角「设置」抢走
       preferredFocus={tab === item.id}
+      // ★ 显式左右焦点：只在这三个 Tab 之间走，不会被「设置」抢
+      nextFocusLeft={tabTags[index - 1]}
+      nextFocusRight={tabTags[index + 1]}
       onPress={() => goToTab(item.id)}
       onPressIn={() => setTabHeld(true)}
       onPressOut={() => setTabHeld(false)}
@@ -667,7 +696,11 @@ function AppShell(): React.JSX.Element {
           <View style={styles.headerMain}>
             <Text style={styles.brand}>小包子影视</Text>
           </View>
-          <Pressable onPress={() => setRoute({ name: 'settings' })} hitSlop={8}>
+          <Pressable
+            onPress={() => setRoute({ name: 'settings' })}
+            hitSlop={8}
+            nextFocusDown={tabTags[TABS.findIndex(item => item.id === tab)]}
+          >
             <GlassBox style={styles.settingsBtn} cornerRadius={radius.pill}>
               {/* ★ 有新版才出现的小点：不弹窗、不打扰，但一眼看得见 */}
               <View style={styles.settingsRow}>
@@ -776,20 +809,16 @@ function AppShell(): React.JSX.Element {
 }
 
 /** 底部 Tab：选中项文字高亮 + 下面一个小点 */
-function TabButton({
-  label,
-  active,
-  passive,
-  preferredFocus,
-  onPress,
-  onPressIn,
-  onPressOut,
-  onLayout,
-}: {
-  label: string;
-  active: boolean;
-  /** TV：挂载时是否请求焦点（当前 Tab 为 true） */
-  preferredFocus?: boolean;
+const TabButton = React.forwardRef<
+  React.ElementRef<typeof Pressable>,
+  {
+    label: string;
+    active: boolean;
+    /** TV：挂载时是否请求焦点（当前 Tab 为 true） */
+    preferredFocus?: boolean;
+    /** TV：左右方向键的显式目标（native tag） */
+    nextFocusLeft?: number;
+    nextFocusRight?: number;
   /**
    * ★ **纯展示**：只负责画，完全不接收触摸。
    *
@@ -801,13 +830,28 @@ function TabButton({
    *     前者在 iOS 上直接把 `userInteractionEnabled` 置 false，
    *     触摸才**真的**会落到玻璃上。
    */
-  passive?: boolean;
-  onPress: () => void;
-  /** 按住 / 松开 —— 给外面那层胶囊做按压回弹用（真玻璃下用不到） */
-  onPressIn?: () => void;
-  onPressOut?: () => void;
-  onLayout: (e: LayoutChangeEvent) => void;
-}): React.JSX.Element {
+    passive?: boolean;
+    onPress: () => void;
+    /** 按住 / 松开 —— 给外面那层胶囊做按压回弹用（真玻璃下用不到） */
+    onPressIn?: () => void;
+    onPressOut?: () => void;
+    onLayout: (e: LayoutChangeEvent) => void;
+  }
+>(function TabButton(
+  {
+    label,
+    active,
+    passive,
+    preferredFocus,
+    nextFocusLeft,
+    nextFocusRight,
+    onPress,
+    onPressIn,
+    onPressOut,
+    onLayout,
+  },
+  ref,
+): React.JSX.Element {
   const { color } = useTheme();
   const styles = useMemo(() => makeStyles(color), [color]);
 
@@ -830,8 +874,11 @@ function TabButton({
 
   return (
     <Pressable
+      ref={ref}
       style={styles.tab}
       hasTVPreferredFocus={preferredFocus}
+      nextFocusLeft={nextFocusLeft}
+      nextFocusRight={nextFocusRight}
       onPress={onPress}
       onPressIn={onPressIn}
       onPressOut={onPressOut}
@@ -840,7 +887,7 @@ function TabButton({
       {content}
     </Pressable>
   );
-}
+});
 
 const makeStyles = (
   color: Palette,

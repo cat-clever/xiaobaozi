@@ -19,6 +19,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Pressable } from '../components/FocusablePressable';
+import { isRemoteMode } from '../tv/inputMode';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Video from 'react-native-video';
 import type { VideoRef } from 'react-native-video';
@@ -378,6 +379,9 @@ function PlayerView({
     setChrome(true);
     if (hideTimer.current) clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => {
+      // ★ 遥控器模式下**不自动收起**：收起后焦点会掉回背景（Tab / 设置），
+      //   用户按方向键就像"播放器不接受焦点"。
+      if (isRemoteMode()) return;
       chromeRef.current = false;
       setChrome(false);
     }, CHROME_HIDE_MS);
@@ -1347,7 +1351,12 @@ function PlayerView({
         ) : chrome ? (
           <>
             <View style={[styles.topBar, { paddingTop: space.sm + topPad }]}>
-              <Pressable onPress={handleBack} style={styles.iconBtn} hitSlop={8}>
+              <Pressable
+                onPress={handleBack}
+                style={styles.iconBtn}
+                hitSlop={8}
+                hasTVPreferredFocus
+              >
                 <Text style={styles.iconText}>‹</Text>
               </Pressable>
               <Text style={styles.title} numberOfLines={1}>
@@ -1563,6 +1572,7 @@ function PlayerView({
                       styles.cell,
                       ep.episodeIndex === epIdx && styles.cellActive,
                     ]}
+                    hasTVPreferredFocus={ep.episodeIndex === epIdx}
                     onPress={() => {
                       setEpIdx(ep.episodeIndex);
                       setPickIdx(0);

@@ -17,12 +17,10 @@ import type { PressableProps, ViewStyle } from 'react-native';
 import { useTheme } from '../theme';
 import { useRemoteMode } from '../tv/inputMode';
 
-export function Pressable({
-  style,
-  onFocus,
-  onBlur,
-  ...rest
-}: PressableProps): React.JSX.Element {
+export const Pressable = React.forwardRef<
+  React.ElementRef<typeof RNPressable>,
+  PressableProps
+>(function Pressable({ style, onFocus, onBlur, ...rest }, ref) {
   const { color } = useTheme();
   const remote = useRemoteMode();
   const [focused, setFocused] = useState(false);
@@ -38,6 +36,7 @@ export function Pressable({
   return (
     <RNPressable
       {...rest}
+      ref={ref}
       onFocus={event => {
         setFocused(true);
         onFocus?.(event);
@@ -52,4 +51,4 @@ export function Pressable({
       ]}
     />
   );
-}
+});
