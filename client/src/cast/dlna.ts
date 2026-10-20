@@ -97,13 +97,9 @@ export async function describe(hit: SsdpHit): Promise<CastDevice | null> {
   if (!text) return null;
   const parsed = parseDescription(text, hit.location);
   if (!parsed) return null;
-  // ★ 有些接收端把 friendlyName 报成主机名 "localhost"，对用户没有意义 ——
-  //   退到型号 / IP（2026-10-20 截图里就是 "localhost"）。
-  const friendly = parsed.friendlyName.trim();
-  const friendlyUsable = friendly !== '' && friendly.toLowerCase() !== 'localhost';
   return {
     id: parsed.udn || hit.usn || hostOf(hit.location),
-    name: friendlyUsable ? friendly : parsed.modelName || hostOf(hit.location),
+    name: parsed.friendlyName || parsed.modelName || hostOf(hit.location),
     protocol: 'dlna',
     model: parsed.modelName,
     address: hit.address || hostOf(hit.location),
