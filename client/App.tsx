@@ -625,6 +625,8 @@ function AppShell(): React.JSX.Element {
       label={item.label}
       active={tab === item.id}
       passive={liquidGlass}
+      // ★ TV 上初始/返回时焦点落在当前 Tab 上，而不是被右上角「设置」抢走
+      preferredFocus={tab === item.id}
       onPress={() => goToTab(item.id)}
       onPressIn={() => setTabHeld(true)}
       onPressOut={() => setTabHeld(false)}
@@ -749,16 +751,20 @@ function AppShell(): React.JSX.Element {
               /* ★ 这一层 `Animated.View`（JS 弹簧回弹）只在没有真玻璃时才用：
                   那种情况下按钮垫在玻璃上面、玻璃收不到触摸，全靠它补手感。 */
               <Animated.View style={{ transform: [{ scale: tabScale }] }}>
-                <Pressable focusable={false} onPress={e => pressTabAt(e.nativeEvent.locationX)}>
-                  <GlassBox
-                    style={styles.tabBar}
-                    cornerRadius={radius.pill}
-                    interactive
-                  >
-                    {capsule}
-                    {tabButtons}
-                  </GlassBox>
-                </Pressable>
+                {/*
+                  ★ 这里**不再**套整条 Pressable（2026-10-20 TV 反馈：焦点
+                    会跳过三个 Tab 直接跑到右上角「设置」）。单个 Tab 自己就是
+                    Pressable，触摸/遥控器都走它；整条那层在 TV 上只会多一个
+                    焦点层，去掉更干净。
+                */}
+                <GlassBox
+                  style={styles.tabBar}
+                  cornerRadius={radius.pill}
+                  interactive
+                >
+                  {capsule}
+                  {tabButtons}
+                </GlassBox>
               </Animated.View>
             )}
           </View>
@@ -774,6 +780,7 @@ function TabButton({
   label,
   active,
   passive,
+  preferredFocus,
   onPress,
   onPressIn,
   onPressOut,
@@ -781,6 +788,8 @@ function TabButton({
 }: {
   label: string;
   active: boolean;
+  /** TV：挂载时是否请求焦点（当前 Tab 为 true） */
+  preferredFocus?: boolean;
   /**
    * ★ **纯展示**：只负责画，完全不接收触摸。
    *
@@ -822,6 +831,7 @@ function TabButton({
   return (
     <Pressable
       style={styles.tab}
+      hasTVPreferredFocus={preferredFocus}
       onPress={onPress}
       onPressIn={onPressIn}
       onPressOut={onPressOut}

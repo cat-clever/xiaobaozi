@@ -69,7 +69,10 @@ class MainActivity : ReactActivity() {
     // ★ 跳过输入框：ReactEditText 故意把 focusableInTouchMode 置 false
     //   （触摸由 JS 管理，避免键盘乱弹）。补上去会破坏搜索框。
     if (view is android.widget.EditText) return
-    if ((view.isClickable || view.isFocusable) && !view.isFocusableInTouchMode) {
+    // ★ 只补**可点**的 View（Pressable / Switch）。ScrollView 之类只是
+    //   focusable、不可点 —— 把它们也变成焦点目标的话，方向键会停在
+    //   滚动容器上，看起来就是"条目选不对 / 焦点乱跳"。
+    if (view.isClickable && !view.isFocusableInTouchMode) {
       view.isFocusableInTouchMode = true
     }
     if (view is ViewGroup) {
@@ -79,7 +82,7 @@ class MainActivity : ReactActivity() {
 
   private fun requestFirstFocus(view: View): Boolean {
     if (!view.isShown || view is android.widget.EditText) return false
-    if (view.isFocusableInTouchMode && (view.isClickable || view.isFocusable)) {
+    if (view.isClickable && view.isFocusableInTouchMode) {
       if (view.requestFocus()) return true
     }
     if (view is ViewGroup) {

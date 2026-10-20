@@ -92,7 +92,8 @@ export function SettingsScreen({ onBack }: Props): React.JSX.Element {
 
   return (
     <ScrollView contentContainerStyle={styles.content}>
-      <Pressable onPress={onBack} style={styles.back}>
+      {/* ★ TV：进设置页时焦点先落在「返回」上，而不是被下面某一行抢走 */}
+      <Pressable onPress={onBack} style={styles.back} hasTVPreferredFocus>
         <Text style={styles.backText}>‹ 返回</Text>
       </Pressable>
 
