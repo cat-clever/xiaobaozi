@@ -44,11 +44,23 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+      Android TV / 电视盒子：不要求触摸屏，也不要求 leanback（手机同样能装）。
+      ★ required="false" 是必须的 —— 声明成 true 的话手机就被商店/安装器拒装。
+    -->
+    <uses-feature
+      android:name="android.software.leanback"
+      android:required="false" />
+    <uses-feature
+      android:name="android.hardware.touchscreen"
+      android:required="false" />
+
     <application
       android:name=".MainApplication"
       android:label="@string/app_name"
       android:icon="@mipmap/ic_launcher"
       android:roundIcon="@mipmap/ic_launcher_round"
+      android:banner="@drawable/tv_banner"
       android:allowBackup="false"
       android:theme="@style/AppTheme"
       android:usesCleartextTraffic="true"
@@ -71,6 +83,14 @@
         <intent-filter>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
+        </intent-filter>
+        <!--
+          TV 启动器只列带 LEANBACK_LAUNCHER 的应用。手机上的 LAUNCHER
+          入口保持不动，两条并存。
+        -->
+        <intent-filter>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
         </intent-filter>
       </activity>
 
