@@ -9,7 +9,7 @@
  *   现在转发投屏会起前台服务保活（`RelayKeepAliveService`），所以能息屏；
  *   但**保活没起来**（老原生包 / 系统拒绝）时必须退回"别息屏"的提示。
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -20,8 +20,6 @@ import {
   View,
 } from 'react-native';
 
-import { currentCastDiag, fetchServerStats } from '../media/mediaServer';
-import type { MediaServerStats } from '../media/NativeMediaServer';
 import { AirPlayButton, AIRPLAY_AVAILABLE } from './AirPlayButton';
 import { GlassBox } from './GlassBox';
 import { radius, space, useTheme } from '../theme';
@@ -222,14 +220,6 @@ function CastingPanel({
         </Text>
       ) : null}
       {/*
-        ★★ 投屏链路诊断。投屏"投上了但电视不动/播一秒就崩"时，界面之外什么
-           都看不到 —— 接收端到底收到了什么样的播放列表、重写有没有真的发生，
-           全靠这几行。★ 必须每次渲染现读：诊断是接收端来拉播放列表时才写进去
-           的，晚于投屏那一刻，跟着状态轮询刷新才拿得到。
-      */}
-      <CastDiagLines styles={styles} />
-
-      {/*
         ★ 转发模式下把投过去的地址摆出来（诊断用）。
           电视"收下了但不出画面"时，这是唯一能分清责任的办法：
           拿电脑浏览器打开这个地址 —— 能下到播放列表说明手机服务可达，
@@ -249,92 +239,6 @@ function CastingPanel({
         </Pressable>
       </View>
     </View>
-  );
-}
-
-/**
- * 投屏链路的几行诊断（见 `mediaServer.ts` 的 `CastPlaylistDiag`）。
- *
- * ★ 三件事分开看，才能定位到是哪一环坏了：
- *   1. **服务在不在干活** —— 请求计数（`fetchServerStats`）。服务没起来的话，
- *      电视那头和"投过去了但不动"长得一模一样，光看接收端日志分不出来。
- *   2. **播放列表重写有没有发生** —— 重写成功/失败。
- *   3. **重写后第一条分片长什么样** —— 直接看后缀。
- */
-function CastDiagLines({
-  styles,
-}: {
-  styles: ReturnType<typeof makeStyles>;
-}): React.JSX.Element {
-  const diag = currentCastDiag();
-  const [stats, setStats] = useState<MediaServerStats | null>(null);
-
-  // 每秒问一次原生服务的请求统计。面板本来就跟着状态轮询在重渲染，
-  // 这里单独取是因为它走的是原生调用、不在 props 里。
-  useEffect(() => {
-    let alive = true;
-    const tick = () => {
-      void fetchServerStats().then((value) => {
-        if (alive) setStats(value);
-      });
-    };
-    tick();
-    const timer = setInterval(tick, 1000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, []);
-
-  return (
-    <>
-      <Text style={styles.diag}>
-        服务：{stats === null ? '不可用' : stats.running ? '运行中' : '未启动'} · 成功{' '}
-        {stats?.ok ?? 0} / 失败 {stats?.fail ?? 0}
-        {stats?.peak === undefined ? '' : ` · 并发峰值 ${stats.peak}`}
-      </Text>
-      {stats !== null && stats.lastFail !== '' ? (
-        <Text style={styles.diag} numberOfLines={1}>
-          最后失败：{stats.lastFail}
-        </Text>
-      ) : null}
-      {/*
-        ★ 最近几次请求（新在前）。投屏崩在接收端、而服务"成功 N / 失败 0"时，
-          这几行是唯一能还原现场的东西 —— 崩之前它到底在拉哪一段。
-      */}
-      {stats?.recent?.slice(0, 6).map((line) => (
-        <Text key={line} style={styles.diag} numberOfLines={1}>
-          · {line}
-        </Text>
-      ))}
-      {diag === null ? (
-        <Text style={styles.diag}>链路：还没收到接收端的播放列表请求</Text>
-      ) : (
-        <>
-          <Text style={styles.diag}>
-            转封装：{diag.remuxed ? '已转 fMP4' : '未转（直通）'} · 重写：
-            {diag.rewritten ? '成功' : '失败（原样透传）'}
-          </Text>
-          {!diag.remuxed && diag.remuxWhy !== '' ? (
-            <Text style={styles.diag} numberOfLines={2}>
-              未转原因：{diag.remuxWhy}
-            </Text>
-          ) : null}
-          <Text style={styles.diag} numberOfLines={1}>
-            首片：{diag.firstSegment}
-          </Text>
-          <Text style={styles.diag} numberOfLines={3}>
-            标签：{diag.playlistTags}
-          </Text>
-          <Text style={styles.diag} numberOfLines={2}>
-            {diag.whichList} {diag.listUrl} · {diag.playlistBytes} 字节
-          </Text>
-          <Text style={styles.diag} numberOfLines={4}>
-            内容：{diag.playlistHead}
-          </Text>
-        </>
-      )}
-    </>
   );
 }
 
@@ -438,12 +342,6 @@ const makeStyles = (color: Palette) =>
       fontSize: 10,
       lineHeight: 15,
       marginTop: space.sm,
-    },
-    diag: {
-      color: color.textDim,
-      fontSize: 11,
-      lineHeight: 16,
-      marginTop: space.xs,
     },
     castingActions: { flexDirection: 'row', gap: space.sm, marginTop: space.md },
     action: {
