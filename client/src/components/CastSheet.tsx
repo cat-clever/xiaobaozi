@@ -89,7 +89,14 @@ export function CastSheet({
       {/* 点空白处收起 */}
       <Pressable style={styles.scrim} onPress={onClose} />
       <View style={styles.sheetWrap} pointerEvents="box-none">
-        <GlassBox style={styles.sheet} cornerRadius={radius.lg}>
+        {/*
+          ★ 这里**关掉玻璃**（2026-10-20）。Android 的 GlassView 会把
+            "背后的窗口内容"抓下来再画一遍 —— 而抓取时 scrim 还在，
+            于是抽屉采到的是**被压暗的页面**：背后是浅色详情页时整块抽屉
+            发灰（用户截图反馈"抽屉变暗了"）。`sheet` 里本来就垫了
+            `barSolid` 实底，关掉玻璃正好把它露出来，颜色与背后无关。
+        */}
+        <GlassBox style={styles.sheet} cornerRadius={radius.lg} enabled={false}>
           <View style={styles.header}>
             <Text style={styles.title}>投屏</Text>
             <Pressable onPress={onRefresh} hitSlop={10} disabled={scanning}>
