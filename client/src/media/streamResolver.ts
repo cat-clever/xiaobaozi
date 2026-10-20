@@ -13,6 +13,8 @@
  *
  *   播放器侧因此只认一个本地地址，不再需要任何自定义头能力。
  */
+import { Platform } from 'react-native';
+
 import { BADCI, MEDIA_UA } from '../api/source1/constants';
 import * as s1 from '../api/source1';
 import * as s2 from '../api/source2';
@@ -88,9 +90,15 @@ async function openLocalStream(
 ): Promise<ResolvedMediaStream> {
   try {
     const session = await openSession(config);
-    // 播放列表线路先探一次要不要转封装（★ 必须在播放器取播放列表之前）。
-    // 探测失败/不支持就照常直通 —— 见 MediaSession.prepareRemux 的注释。
-    if (format === 'hls') await session.prepareRemux(target);
+    // ★★ Android 本地播放**不做**转封装（2026-10-20）。
+    //
+    //   ExoPlayer 自己能解 H.264 / HEVC-in-TS，本地播放转了纯属多一层开销：
+    //   转封装必须**整片下完**才能产出 fMP4（而代理路径是边下边发），
+    //   慢网下每片要多等好几秒 —— 表现就是"正常播放也一卡一卡"。
+    //
+    //   iOS 的 AVPlayer 不认 HEVC-in-TS，必须转；投屏（openCastProxy）
+    //   也必须转（接收端只看分片后缀决定要不要自己换封装）。
+    if (format === 'hls' && Platform.OS !== 'android') await session.prepareRemux(target);
     return {
       streamUrl: session.streamUrl(target, format),
       format,
