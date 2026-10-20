@@ -141,6 +141,21 @@ export function getCurrentVersion(): Promise<CurrentVersion | null> {
   return versionPromise;
 }
 
+/**
+ * 只读本机版本（纯本地，不走网络），读到就写进全局状态。
+ *
+ * ★★ 设置页的「当前版本」**不能等远端清单**：清单是 GitHub 请求，国内
+ *   可能要等到 10 秒超时。原来 `checkForUpdate` 用 `Promise.all` 把两者
+ *   绑在一起，结果就是"打开设置页很久都显示读取中…"（2026-10-20 反馈，
+ *   iOS / Android 都一样）。版本号本来就是本地信息，先落地。
+ */
+export function loadCurrentVersion(): Promise<CurrentVersion | null> {
+  return getCurrentVersion().then(current => {
+    if (current) set({ current });
+    return current;
+  });
+}
+
 const TIMEOUT_MS = 10_000;
 
 async function fetchManifest(): Promise<UpdateManifest | null> {
@@ -173,8 +188,10 @@ export function checkForUpdate(): Promise<void> {
 
   inFlight = (async () => {
     try {
+      // ★ 用 `loadCurrentVersion`：它一读到就写进 state，设置页的版本号
+      //   不用等清单回来。
       const [current, manifest] = await Promise.all([
-        getCurrentVersion(),
+        loadCurrentVersion(),
         fetchManifest(),
       ]);
 

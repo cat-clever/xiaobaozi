@@ -19,6 +19,7 @@ import {
   checkForUpdate,
   downloadAndInstall,
   isUpdaterAvailable,
+  loadCurrentVersion,
   openExternal,
   useUpdateState,
 } from '../update/updater';
@@ -47,8 +48,11 @@ export function SettingsScreen({ onBack }: Props): React.JSX.Element {
    * 用户没手动点的话没必要为一次进页面再打一次网络）。
    */
   useEffect(() => {
+    // ★ 版本号是纯本地读取，**先单独取**，别等远端清单（GitHub 在国内
+    //   可能要等到 10 秒超时，界面就会一直停在"读取中…"）。
+    if (!update.current) void loadCurrentVersion();
     if (update.phase === 'idle') void checkForUpdate();
-  }, [update.phase]);
+  }, [update.phase, update.current]);
 
   const manifest = update.manifest;
   const newer = update.phase === 'available' && !!manifest;
