@@ -40,7 +40,11 @@ class MainActivity : ReactActivity() {
     code in KeyEvent.KEYCODE_DPAD_UP..KeyEvent.KEYCODE_DPAD_CENTER ||
       code == KeyEvent.KEYCODE_ENTER ||
       code == KeyEvent.KEYCODE_NUMPAD_ENTER ||
-      code in KeyEvent.KEYCODE_MEDIA_PLAY..KeyEvent.KEYCODE_MEDIA_FAST_FORWARD
+      // 媒体键：85..90 是 PLAY_PAUSE/STOP/NEXT/PREVIOUS/REWIND/FAST_FORWARD，
+      // PLAY(126) / PAUSE(127) 不连续，单独列
+      code in KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE..KeyEvent.KEYCODE_MEDIA_FAST_FORWARD ||
+      code == KeyEvent.KEYCODE_MEDIA_PLAY ||
+      code == KeyEvent.KEYCODE_MEDIA_PAUSE
 
   /**
    * ★★ 遥控器焦点引导。
