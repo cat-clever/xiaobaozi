@@ -10,20 +10,47 @@
  * 用法：把 `import { Pressable } from 'react-native'` 换成
  * `import { Pressable } from '.../FocusablePressable'` 即可，其余 props 不变。
  */
-import React, { useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Pressable as RNPressable } from 'react-native';
 import type { PressableProps, ViewStyle } from 'react-native';
 
 import { useTheme } from '../theme';
-import { useRemoteMode } from '../tv/inputMode';
+import { isRemoteMode, useRemoteMode } from '../tv/inputMode';
+
+/**
+ * ★ 遥控器按键防抖间隔（毫秒）。
+ *
+ * 即使原生层已经过滤了 repeatCount > 0 的按键事件（见 MainActivity.kt），
+ * 有些盒子的遥控器/蓝牙遥控器仍然可能在极短间隔内发出多次独立的 ACTION_DOWN
+ * （repeatCount 均为 0）。300ms 足以挡住这类抖动，又不会让正常操作感觉迟钝。
+ */
+const TV_PRESS_DEBOUNCE_MS = 300;
 
 export const Pressable = React.forwardRef<
   React.ElementRef<typeof RNPressable>,
   PressableProps
->(function Pressable({ style, onFocus, onBlur, ...rest }, ref) {
+>(function Pressable({ style, onFocus, onBlur, onPress, ...rest }, ref) {
   const { color } = useTheme();
   const remote = useRemoteMode();
   const [focused, setFocused] = useState(false);
+
+  /**
+   * ★ 遥控器模式下给 onPress 加防抖 —— 上一次触发后 300ms 内的再次触发直接丢弃。
+   *   这是"Tab 跳两格 / 设置页快速跳 / 播放器焦点乱跳"的第二道保险。
+   *   触摸模式不受影响。
+   */
+  const lastPressRef = useRef(0);
+  const debouncedOnPress = useCallback(
+    (e: Parameters<NonNullable<PressableProps['onPress']>>[0]) => {
+      if (isRemoteMode()) {
+        const now = Date.now();
+        if (now - lastPressRef.current < TV_PRESS_DEBOUNCE_MS) return;
+        lastPressRef.current = now;
+      }
+      onPress?.(e);
+    },
+    [onPress],
+  );
 
   // outline 不占布局（RN 0.76+ 支持），不会把按钮撑大/挤歪
   const ring: ViewStyle = {
@@ -45,6 +72,7 @@ export const Pressable = React.forwardRef<
         setFocused(false);
         onBlur?.(event);
       }}
+      onPress={onPress ? debouncedOnPress : undefined}
       style={state => [
         typeof style === 'function' ? style(state) : style,
         focused && remote ? ring : null,
@@ -52,3 +80,4 @@ export const Pressable = React.forwardRef<
     />
   );
 });
+

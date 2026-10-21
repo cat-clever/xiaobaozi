@@ -27,6 +27,12 @@ class MainActivity : ReactActivity() {
   override fun dispatchKeyEvent(event: KeyEvent): Boolean {
     if (event.action == KeyEvent.ACTION_DOWN && isRemoteKey(event.keyCode)) {
       InputModeModule.note(true)
+      // ★★ 遥控器按住方向键/确认键时，Android 会快速重复发送 ACTION_DOWN
+      //   （repeatCount 从 0 开始递增）。RN 的焦点系统对每一次 ACTION_DOWN
+      //   都会执行一次焦点移动 —— 所以按一下方向键，焦点就跳了两三格
+      //   （用户报的「选第二个 Tab 时很快跳到下一个」就是这个原因）。
+      //   把 repeatCount > 0 的按键事件直接吃掉，只让**首次按下**那一个通过。
+      if (event.repeatCount > 0) return true
     }
     return super.dispatchKeyEvent(event)
   }
