@@ -142,8 +142,12 @@ export async function homeFeed(page = 1): Promise<HomeBlock[]> {
   //   `recommend_v2` 是另一套推荐位，内容和首页列表对不上。
   //
   //   `client.screen` 的默认值正好就是参考实现那套参数（typeId=0、
-  //   typeValue/tagType/area/year/sort 全空串），所以这里只传页码。
-  const list = await client.screen({ pn: page });
+  //   typeValue/tagType/area/year 全空串）。
+  //
+  // ★ 排序用**日榜**（2026-10-21 用户明确要求）：源1 分类的排序项是
+  //   `["排序","最热","最近更新","最新上线","评分","日榜","周榜","月榜"]`，
+  //   首页要的是「日榜」而不是默认排序。type_id=0 = 全部分类。
+  const list = await client.screen({ pn: page, sort: '日榜' });
   const items = list.map(toVodItem).filter((x) => x.title);
   return items.length ? [{ title: '热播推荐', items }] : [];
 }
