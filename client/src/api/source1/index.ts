@@ -134,10 +134,17 @@ export interface HomeBlock {
 /** 首页推荐 */
 export async function homeFeed(page = 1): Promise<HomeBlock[]> {
   const client = await getClient();
-  const list = await client.recommend(page);
+  // ★★ 首页数据源用 `screen_v2`（`/api/new_search/screen_v2`），**不是**
+  //   `recommend_v2`（2026-10-21 用户要求）。
+  //
+  //   参考实现 `参考/影视站api1.js` 的首页列表走的是 `/api/list` ->
+  //   `screen(pn, type_id=0, 其余全空)`，也就是源站自己的默认排序列表；
+  //   `recommend_v2` 是另一套推荐位，内容和首页列表对不上。
+  //
+  //   `client.screen` 的默认值正好就是参考实现那套参数（typeId=0、
+  //   typeValue/tagType/area/year/sort 全空串），所以这里只传页码。
+  const list = await client.screen({ pn: page });
   const items = list.map(toVodItem).filter((x) => x.title);
-  // ★ 首页板块名用「热播推荐」（2026-10-21 用户要求）：
-  //   `recommend_v2` 本来就是源站的推荐位，叫「全网热门」不准确。
   return items.length ? [{ title: '热播推荐', items }] : [];
 }
 
