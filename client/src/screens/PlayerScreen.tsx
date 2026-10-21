@@ -12,6 +12,7 @@ import {
   BackHandler,
   Image,
   PanResponder,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -249,6 +250,15 @@ function PlayerView({
   const styles = useMemo(() => makeStyles(color), [color]);
   const { width, height } = useWindowDimensions();
   const landscape = width > height;
+  /** 电视/盒子：永远横屏，**绝不请求竖屏** —— 电视不会跟着转，只会让画面横着显示 */
+  const isTV = Platform.isTV;
+  const setOrientation = useCallback(
+    (mode: 'portrait' | 'landscape') => {
+      if (isTV) return;
+      applyOrientation(mode);
+    },
+    [isTV],
+  );
 
   /**
    * ★ 播放页是**全屏铺**的（不走 SafeAreaView），必须自己让开安全区 ——
@@ -619,9 +629,9 @@ function PlayerView({
   // 退出播放页时把方向还原成竖屏
   useEffect(
     () => () => {
-      applyOrientation('portrait');
+      setOrientation('portrait');
     },
-    [],
+    [setOrientation],
   );
 
   /**
@@ -638,7 +648,7 @@ function PlayerView({
    */
   useEffect(() => {
     if (!mini) return;
-    applyOrientation('portrait');
+    setOrientation('portrait');
     setFullscreen(false);
     // ★ 抽屉也要收掉 —— 小窗的 stage 是**绝对定位**的（脱离文档流），
     //   抽屉要是还开着，就成了唯一的流内元素，被顶到屏幕最上面去。
@@ -646,7 +656,7 @@ function PlayerView({
     // 按钮是"点一下才出来"的，进小窗时提示一句，免得找不到
     bumpChrome();
     flashHint('点一下小窗显示按钮');
-  }, [mini, bumpChrome, flashHint]);
+  }, [mini, bumpChrome, flashHint, setOrientation]);
 
   /**
    * ★★ 「退出全屏」要有**唯一一份**实现。
@@ -656,9 +666,9 @@ function PlayerView({
    */
   const exitFullscreen = useCallback(() => {
     setFullscreen(false);
-    applyOrientation('portrait');
+    setOrientation('portrait');
     flashHint('已退出全屏');
-  }, [flashHint]);
+  }, [flashHint, setOrientation]);
 
   /**
    * ★★ 返回的语义分两层：
@@ -671,12 +681,18 @@ function PlayerView({
    * 那一下跳得太狠了，退全屏本来只是**这一层**的事。
    */
   const handleBack = useCallback(() => {
+    // ★ TV 没有"退出全屏回竖屏"这一步：直接收起播放页，避免请求竖屏后
+    //   整个界面横着显示（2026-10-21 反馈）。
+    if (isTV) {
+      onBack();
+      return;
+    }
     if (fullscreen || landscape) {
       exitFullscreen();
       return;
     }
     onBack();
-  }, [fullscreen, landscape, exitFullscreen, onBack]);
+  }, [isTV, fullscreen, landscape, exitFullscreen, onBack]);
 
   /**
    * 硬件返回键：**先关抽屉 → 再退全屏**，之后才轮到 App 那条（收小窗）。
@@ -685,6 +701,17 @@ function PlayerView({
    *   两件事都不用的时候不注册，让 App 那条正常生效。
    */
   useEffect(() => {
+    if (isTV) {
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (drawer !== 'none') {
+          setDrawer('none');
+          return true;
+        }
+        onBack();
+        return true;
+      });
+      return () => sub.remove();
+    }
     if (drawer === 'none' && !fullscreen && !landscape) return undefined;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (drawer !== 'none') {
@@ -695,7 +722,7 @@ function PlayerView({
       return true;
     });
     return () => sub.remove();
-  }, [drawer, fullscreen, landscape, exitFullscreen]);
+  }, [isTV, drawer, fullscreen, landscape, exitFullscreen, onBack]);
 
   // ---------- 手势 ----------
   const gesture = useRef({
@@ -1101,10 +1128,10 @@ function PlayerView({
       return;
     }
     setFullscreen(true);
-    applyOrientation('landscape');
+    setOrientation('landscape');
     // 给个可见反馈 —— 转屏是系统行为，失败时按钮看着像"没反应"
     flashHint('正在切横屏…');
-  }, [fullscreen, landscape, exitFullscreen, flashHint]);
+  }, [fullscreen, landscape, exitFullscreen, flashHint, setOrientation]);
 
   const lineLabel = stream ? stream.lineName : '正在解析线路…';
   // 源1 是线路表；源2 是清晰度档位（别跟分段混了）
@@ -1157,7 +1184,7 @@ function PlayerView({
 
   return (
     <View
-      style={[styles.root, mini && styles.rootMini]}
+      style={[styles.root, mini && styles.rootMini, isTV && !mini && styles.rootTv]}
       pointerEvents={mini ? 'box-none' : 'auto'}
     >
       {/*
@@ -1171,6 +1198,7 @@ function PlayerView({
           landscape
             ? styles.stageFull
             : { height: Math.round((width * 9) / 16), marginTop: insets.top },
+          isTV && !mini && styles.stageTv,
           mini && styles.miniBox,
           mini && { width: miniWidth, height: miniHeight },
           mini && { transform: miniOffset.getTranslateTransform() },
@@ -1430,25 +1458,29 @@ function PlayerView({
                     <Text style={styles.chipText}>选集</Text>
                   </Pressable>
                 ) : null}
-                {/* 系统画中画：浮到桌面 / 其他 App 上面继续播 */}
-                <Pressable
-                  onPress={() => videoRef.current?.enterPictureInPicture()}
-                  style={styles.chipBtn}
-                  hitSlop={6}
-                >
-                  <Text style={styles.chipText}>
-                    {inPip ? '画中画中' : '画中画'}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  onPress={toggleFullscreen}
-                  style={styles.chipBtn}
-                  hitSlop={6}
-                >
-                  <Text style={styles.chipText}>
-                    {fullscreen || landscape ? '退出全屏' : '全屏'}
-                  </Text>
-                </Pressable>
+                {/* 画中画 / 全屏是手机上的能力，TV 上没意义（永远横屏） */}
+                {!isTV ? (
+                  <>
+                    <Pressable
+                      onPress={() => videoRef.current?.enterPictureInPicture()}
+                      style={styles.chipBtn}
+                      hitSlop={6}
+                    >
+                      <Text style={styles.chipText}>
+                        {inPip ? '画中画中' : '画中画'}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={toggleFullscreen}
+                      style={styles.chipBtn}
+                      hitSlop={6}
+                    >
+                      <Text style={styles.chipText}>
+                        {fullscreen || landscape ? '退出全屏' : '全屏'}
+                      </Text>
+                    </Pressable>
+                  </>
+                ) : null}
               </View>
             </View>
           </>
@@ -1456,9 +1488,9 @@ function PlayerView({
       </Animated.View>
 
       {/* 竖屏：视频下面接剧集详情与选集（B 站那种），把空间用起来 */}
-      {!mini && !landscape ? (
+      {!mini && (!landscape || isTV) ? (
         <ScrollView
-          style={styles.panel}
+          style={[styles.panel, isTV && styles.panelTv]}
           contentContainerStyle={[
             styles.panelContent,
             { paddingBottom: space.xl + insets.bottom },
@@ -1773,6 +1805,9 @@ const makeStyles = (color: Palette) =>
       backgroundColor: 'rgba(0,0,0,0.55)',
     },
     miniCloseText: { color: '#fff', fontSize: 12, lineHeight: 14 },
+    // ★ TV：视频在左、详情/选集在右，不再靠"转竖屏"去看详情
+    rootTv: { flexDirection: 'row' },
+    stageTv: { width: 'auto', flex: 1 },
     stage: { width: '100%', backgroundColor: '#000', justifyContent: 'center' },
     stageFull: { flex: 1 },
     video: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
@@ -1899,6 +1934,7 @@ const makeStyles = (color: Palette) =>
     chipText: { color: '#fff', fontSize: 12 },
     // 竖屏视频下方那块：剧集详情 + 选集
     panel: { flex: 1, backgroundColor: color.bg },
+    panelTv: { flex: 0, width: '38%' },
     panelContent: { padding: space.lg, paddingBottom: space.xl * 2 },
     infoRow: { flexDirection: 'row', gap: space.lg },
     poster: {
