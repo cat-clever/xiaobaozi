@@ -136,7 +136,9 @@ export async function homeFeed(page = 1): Promise<HomeBlock[]> {
   const client = await getClient();
   const list = await client.recommend(page);
   const items = list.map(toVodItem).filter((x) => x.title);
-  return items.length ? [{ title: '全网热门', items }] : [];
+  // ★ 首页板块名用「热播推荐」（2026-10-21 用户要求）：
+  //   `recommend_v2` 本来就是源站的推荐位，叫「全网热门」不准确。
+  return items.length ? [{ title: '热播推荐', items }] : [];
 }
 
 /** 分类筛选 */
