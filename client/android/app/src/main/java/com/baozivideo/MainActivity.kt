@@ -1,6 +1,7 @@
 package com.baozivideo
 
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -24,17 +25,38 @@ class MainActivity : ReactActivity() {
    *   焦点环只在"遥控器介入"时显示：方向键/确认键按下 -> remote=true，
    *   手指按下 -> remote=false。JS 侧据此决定画不画焦点环。
    */
+  /** 同一个遥控器键的去重窗口（毫秒） */
+  private var lastRemoteKeyCode = 0
+  private var lastRemoteKeyAt = 0L
+
   override fun dispatchKeyEvent(event: KeyEvent): Boolean {
     if (event.action == KeyEvent.ACTION_DOWN && isRemoteKey(event.keyCode)) {
       InputModeModule.note(true)
       // ★★ 遥控器按住方向键/确认键时，Android 会快速重复发送 ACTION_DOWN
       //   （repeatCount 从 0 开始递增）。RN 的焦点系统对每一次 ACTION_DOWN
-      //   都会执行一次焦点移动 —— 所以按一下方向键，焦点就跳了两三格
-      //   （用户报的「选第二个 Tab 时很快跳到下一个」就是这个原因）。
-      //   把 repeatCount > 0 的按键事件直接吃掉，只让**首次按下**那一个通过。
+      //   都会执行一次焦点移动 —— 所以按一下方向键，焦点就跳了两三格。
       if (event.repeatCount > 0) return true
+
+      // ★★ 更隐蔽的一类：有些遥控器/盒子会把**一次物理按键**拆成多次
+      //   独立的 ACTION_DOWN（repeatCount 全是 0）。上面的 repeatCount
+      //   过滤挡不住，而 JS 的 onPress 防抖也管不到**焦点移动**（焦点是
+      //   Android 在 key down 时直接处理的，不经过 onPress）。
+      //   所以在这里对**同一个键**再做一次时间窗去重（用户 2026-10-21 反馈
+      //   "点一下跳了好几个"）。
+      val now = SystemClock.uptimeMillis()
+      if (event.keyCode == lastRemoteKeyCode &&
+        now - lastRemoteKeyAt < REMOTE_KEY_DEBOUNCE_MS
+      ) {
+        return true
+      }
+      lastRemoteKeyCode = event.keyCode
+      lastRemoteKeyAt = now
     }
     return super.dispatchKeyEvent(event)
+  }
+
+  private companion object {
+    const val REMOTE_KEY_DEBOUNCE_MS = 150L
   }
 
   override fun dispatchTouchEvent(ev: MotionEvent): Boolean {

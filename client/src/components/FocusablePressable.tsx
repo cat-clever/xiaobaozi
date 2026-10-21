@@ -24,7 +24,7 @@ import { isRemoteMode, useRemoteMode } from '../tv/inputMode';
  * 有些盒子的遥控器/蓝牙遥控器仍然可能在极短间隔内发出多次独立的 ACTION_DOWN
  * （repeatCount 均为 0）。300ms 足以挡住这类抖动，又不会让正常操作感觉迟钝。
  */
-const TV_PRESS_DEBOUNCE_MS = 300;
+const TV_PRESS_DEBOUNCE_MS = 150;
 
 export const Pressable = React.forwardRef<
   React.ElementRef<typeof RNPressable>,
