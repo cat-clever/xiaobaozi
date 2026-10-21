@@ -147,8 +147,19 @@ export async function homeFeed(page = 1): Promise<HomeBlock[]> {
   // ★ 排序用**日榜**（2026-10-21 用户明确要求）：源1 分类的排序项是
   //   `["排序","最热","最近更新","最新上线","评分","日榜","周榜","月榜"]`，
   //   首页要的是「日榜」而不是默认排序。type_id=0 = 全部分类。
-  const list = await client.screen({ pn: page, sort: '日榜' });
-  const items = list.map(toVodItem).filter((x) => x.title);
+  //
+  // ★ 首页要多一点数据（用户要 20~30 条）：接口一页 20 条，并发取两页再截
+  //   30 条。第二页失败不影响第一页 —— 宁可少几条，不能整个板块空掉。
+  const [first, second] = await Promise.allSettled([
+    client.screen({ pn: page, sort: '日榜' }),
+    client.screen({ pn: page + 1, sort: '日榜' }),
+  ]);
+  if (first.status !== 'fulfilled') throw first.reason;
+  const list = [
+    ...first.value,
+    ...(second.status === 'fulfilled' ? second.value : []),
+  ];
+  const items = list.map(toVodItem).filter((x) => x.title).slice(0, 30);
   return items.length ? [{ title: '热播推荐', items }] : [];
 }
 
