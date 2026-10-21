@@ -7,7 +7,7 @@ import React, {
 } from 'react';
 import {
   ActivityIndicator,
-  Dimensions,
+  useWindowDimensions,
   Platform,
   FlatList,
   RefreshControl,
@@ -39,9 +39,6 @@ import type { SourceId, VodItem } from '../types/schema';
 const GAP = space.md;
 /** 电视横屏宽，多放几列 */
 const COLUMNS = Platform.isTV ? 6 : 3;
-const CARD_WIDTH =
-  (Dimensions.get('window').width - space.lg * 2 - GAP * (COLUMNS - 1)) /
-  COLUMNS;
 
 const SOURCES: SourceId[] = ['s1', 's2'];
 
@@ -98,6 +95,11 @@ interface Props {
 export function CategoryScreen({ onOpen }: Props): React.JSX.Element {
   const { color } = useTheme();
   const tabBarSpace = useTabBarSpace();
+  // ★ 卡片宽度按**当前窗口**算，不能用模块加载时的 `Dimensions` ——
+  //   横屏 / 电视上模块可能是在竖屏宽度下加载的，卡片就只占左边一截
+  //   （用户 2026-10-21 反馈）。
+  const { width: winW } = useWindowDimensions();
+  const cardWidth = (winW - space.lg * 2 - GAP * (COLUMNS - 1)) / COLUMNS;
   const styles = useMemo(
     () => makeStyles(color, tabBarSpace),
     [color, tabBarSpace],
@@ -412,7 +414,7 @@ export function CategoryScreen({ onOpen }: Props): React.JSX.Element {
         ) : undefined
       }
       renderItem={({ item }) => (
-        <MediaCard item={item} width={CARD_WIDTH} onPress={onOpen} />
+        <MediaCard item={item} width={cardWidth} onPress={onOpen} />
       )}
     />
   );

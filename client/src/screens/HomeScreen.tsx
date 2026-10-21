@@ -7,7 +7,7 @@ import React, {
 } from 'react';
 import {
   Animated,
-  Dimensions,
+  useWindowDimensions,
   FlatList,
   Platform,
   RefreshControl,
@@ -35,11 +35,6 @@ const ROWS = 2;
 /** 骨架屏先铺几个板块 */
 const SKELETON_BLOCKS = 2;
 
-const CARD_WIDTH =
-  (Dimensions.get('window').width -
-    space.lg * 2 -
-    GAP * (VISIBLE_COLUMNS - 1)) /
-  VISIBLE_COLUMNS;
 
 /** 展示顺序：全网源在上、精选源在下 */
 const SOURCES: SourceId[] = ['s1', 's2'];
@@ -210,6 +205,10 @@ function Block({
 }): React.JSX.Element {
   const { color } = useTheme();
   const tabBarSpace = useTabBarSpace();
+  // ★ 按当前窗口算卡片宽度（横屏/电视上模块可能是在竖屏宽度下加载的）
+  const { width: winW } = useWindowDimensions();
+  const cardWidth =
+    (winW - space.lg * 2 - GAP * (VISIBLE_COLUMNS - 1)) / VISIBLE_COLUMNS;
   const styles = useMemo(
     () => makeStyles(color, tabBarSpace),
     [color, tabBarSpace],
@@ -243,7 +242,7 @@ function Block({
                 <MediaCard
                   key={item.id}
                   item={item}
-                  width={CARD_WIDTH}
+                  width={cardWidth}
                   onPress={onOpen}
                 />
               ))}
@@ -259,6 +258,9 @@ function Block({
 function SkeletonBlock(): React.JSX.Element {
   const { color } = useTheme();
   const tabBarSpace = useTabBarSpace();
+  const { width: winW } = useWindowDimensions();
+  const cardWidth =
+    (winW - space.lg * 2 - GAP * (VISIBLE_COLUMNS - 1)) / VISIBLE_COLUMNS;
   const styles = useMemo(
     () => makeStyles(color, tabBarSpace),
     [color, tabBarSpace],
@@ -296,8 +298,8 @@ function SkeletonBlock(): React.JSX.Element {
                 style={[
                   styles.skeletonCard,
                   {
-                    width: CARD_WIDTH,
-                    height: CARD_WIDTH * 1.4,
+                    width: cardWidth,
+                    height: cardWidth * 1.4,
                     opacity: pulse,
                   },
                 ]}

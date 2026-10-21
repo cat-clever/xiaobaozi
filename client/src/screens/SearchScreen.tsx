@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Dimensions,
+  useWindowDimensions,
   Platform,
   FlatList,
   StyleSheet,
@@ -20,8 +20,6 @@ import type { VodItem } from '../types/schema';
 const GAP = space.md;
 /** 电视横屏宽，多放几列 */
 const COLUMNS = Platform.isTV ? 6 : 3;
-const CARD_WIDTH =
-  (Dimensions.get('window').width - space.lg * 2 - GAP * (COLUMNS - 1)) / COLUMNS;
 
 interface Props {
   onOpen: (item: VodItem) => void;
@@ -30,6 +28,9 @@ interface Props {
 export function SearchScreen({ onOpen }: Props): React.JSX.Element {
   const { color } = useTheme();
   const tabBarSpace = useTabBarSpace();
+  // ★ 同 CategoryScreen：按当前窗口算，横屏/电视上才不会只占左边
+  const { width: winW } = useWindowDimensions();
+  const cardWidth = (winW - space.lg * 2 - GAP * (COLUMNS - 1)) / COLUMNS;
   const styles = useMemo(
     () => makeStyles(color, tabBarSpace),
     [color, tabBarSpace],
@@ -149,7 +150,7 @@ export function SearchScreen({ onOpen }: Props): React.JSX.Element {
         columnWrapperStyle={styles.row}
         contentContainerStyle={styles.list}
         renderItem={({ item }) => (
-          <MediaCard item={item} width={CARD_WIDTH} onPress={onOpen} />
+          <MediaCard item={item} width={cardWidth} onPress={onOpen} />
         )}
       />
     </View>
