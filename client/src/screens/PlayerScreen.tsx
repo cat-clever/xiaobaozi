@@ -328,9 +328,38 @@ function PlayerView({
   // 亮度只存 ref —— 界面不显示它，只有手势在改
 
   const [chrome, setChrome] = useState(true);
+  /**
+   * ★ 小窗出现时把焦点交给它（一次性）。
+   *
+   *   回到主页后，小窗是绝对定位在角落的一块 View，默认不可聚焦 —— 遥控器
+   *   按方向键根本找不到它，用户就「回不去播放页」（2026-10-22 反馈）。
+   *   下面给小窗盖一层可聚焦的 Pressable，出现时请求一次焦点，按确定即展开。
+   *
+   *   ★ 与 Tab 那边同一个坑：`hasTVPreferredFocus` 一直挂着会在每次重渲染时
+   *     抢焦点，所以拿到焦点后立刻撤掉。
+   */
+  const [miniFocusPending, setMiniFocusPending] = useState(false);
+  useEffect(() => {
+    if (mini) setMiniFocusPending(true);
+  }, [mini]);
+  /** 播放页控件出现时把焦点给「返回」—— 同样只请求一次（同上一个坑）。 */
+  const [playerFocusPending, setPlayerFocusPending] = useState(true);
+  useEffect(() => {
+    if (!mini) setPlayerFocusPending(true);
+  }, [mini]);
   const [drawer, setDrawer] = useState<'none' | 'episode' | 'line' | 'speed'>(
     'none',
   );
+  /**
+   * 选集抽屉打开时把焦点交给当前集 —— 只请求一次。
+   *
+   *   `hasTVPreferredFocus` 一直挂着的话，播放器每 500ms 一次的位置更新
+   *   （重渲染）都会把焦点抢回当前集，用户根本没法在选集列表里移动。
+   */
+  const [episodeFocusPending, setEpisodeFocusPending] = useState(false);
+  useEffect(() => {
+    setEpisodeFocusPending(drawer === 'episode');
+  }, [drawer]);
   const [hint, setHint] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   /** 是不是正处在**系统画中画**里（浮到桌面上那种，跟应用内小窗不是一回事） */
@@ -681,9 +710,13 @@ function PlayerView({
    * 那一下跳得太狠了，退全屏本来只是**这一层**的事。
    */
   const handleBack = useCallback(() => {
-    // ★ TV 没有"退出全屏回竖屏"这一步：直接收起播放页，避免请求竖屏后
-    //   整个界面横着显示（2026-10-21 反馈）。
+    // ★ TV 没有"退出全屏回竖屏"这一步：全屏（详情收起）时先退全屏，
+    //   否则直接收起播放页，避免请求竖屏后整个界面横着显示（2026-10-21 反馈）。
     if (isTV) {
+      if (fullscreen) {
+        setFullscreen(false);
+        return;
+      }
       onBack();
       return;
     }
@@ -705,6 +738,11 @@ function PlayerView({
       const sub = BackHandler.addEventListener('hardwareBackPress', () => {
         if (drawer !== 'none') {
           setDrawer('none');
+          return true;
+        }
+        // 全屏（详情收起）时，返回先退出全屏，而不是直接收起播放页。
+        if (fullscreen) {
+          setFullscreen(false);
           return true;
         }
         onBack();
@@ -1122,6 +1160,13 @@ function PlayerView({
   }, [detail, epIdx, segIdx, s2Segments.length, flashHint]);
 
   const toggleFullscreen = useCallback(() => {
+    // TV：横屏是常态，「全屏」只表示把右侧的剧集详情收起来、画面铺满。
+    // 不请求转屏 —— TV 上转屏没有意义，而且会让整个界面横着显示。
+    if (isTV) {
+      flashHint(fullscreen ? '已退出全屏' : '已进入全屏');
+      setFullscreen(!fullscreen);
+      return;
+    }
     // 已经在横屏（不管是不是自己切的）→ 这一步就是"退出全屏"
     if (fullscreen || landscape) {
       exitFullscreen();
@@ -1131,7 +1176,7 @@ function PlayerView({
     setOrientation('landscape');
     // 给个可见反馈 —— 转屏是系统行为，失败时按钮看着像"没反应"
     flashHint('正在切横屏…');
-  }, [fullscreen, landscape, exitFullscreen, flashHint, setOrientation]);
+  }, [isTV, fullscreen, landscape, exitFullscreen, flashHint, setOrientation]);
 
   const lineLabel = stream ? stream.lineName : '正在解析线路…';
   // 源1 是线路表；源2 是清晰度档位（别跟分段混了）
@@ -1184,7 +1229,11 @@ function PlayerView({
 
   return (
     <View
-      style={[styles.root, mini && styles.rootMini, isTV && !mini && styles.rootTv]}
+      style={[
+        styles.root,
+        mini && styles.rootMini,
+        isTV && !mini && !fullscreen && styles.rootTv,
+      ]}
       pointerEvents={mini ? 'box-none' : 'auto'}
     >
       {/*
@@ -1198,7 +1247,7 @@ function PlayerView({
           landscape
             ? styles.stageFull
             : { height: Math.round((width * 9) / 16), marginTop: insets.top },
-          isTV && !mini && styles.stageTv,
+          isTV && !mini && !fullscreen && styles.stageTv,
           mini && styles.miniBox,
           mini && { width: miniWidth, height: miniHeight },
           mini && { transform: miniOffset.getTranslateTransform() },
@@ -1339,6 +1388,17 @@ function PlayerView({
 
         {mini ? (
           <>
+            {/* TV：整块小窗可聚焦。回到主页后遥控器能选中它，按确定展开 ——
+                否则小窗只是一块不可聚焦的 View，用户回不去播放页。 */}
+            {isTV ? (
+              <Pressable
+                style={StyleSheet.absoluteFill}
+                onPress={onExpand}
+                hasTVPreferredFocus={miniFocusPending}
+                onFocus={() => setMiniFocusPending(false)}
+                accessibilityLabel="展开播放页"
+              />
+            ) : null}
             {paused ? (
               <View style={styles.miniPaused} pointerEvents="none">
                 <Text style={styles.miniPausedText}>▶</Text>
@@ -1383,7 +1443,8 @@ function PlayerView({
                 onPress={handleBack}
                 style={styles.iconBtn}
                 hitSlop={8}
-                hasTVPreferredFocus
+                hasTVPreferredFocus={playerFocusPending}
+                onFocus={() => setPlayerFocusPending(false)}
               >
                 <Text style={styles.iconText}>‹</Text>
               </Pressable>
@@ -1458,7 +1519,8 @@ function PlayerView({
                     <Text style={styles.chipText}>选集</Text>
                   </Pressable>
                 ) : null}
-                {/* 画中画 / 全屏是手机上的能力，TV 上没意义（永远横屏） */}
+                {/* 画中画是手机上的能力；TV 上给「全屏」—— 视频与剧集详情
+                    分屏时，把详情收起来让画面铺满。 */}
                 {!isTV ? (
                   <>
                     <Pressable
@@ -1480,15 +1542,26 @@ function PlayerView({
                       </Text>
                     </Pressable>
                   </>
-                ) : null}
+                ) : (
+                  <Pressable
+                    onPress={toggleFullscreen}
+                    style={styles.chipBtn}
+                    hitSlop={6}
+                  >
+                    <Text style={styles.chipText}>
+                      {fullscreen ? '退出全屏' : '全屏'}
+                    </Text>
+                  </Pressable>
+                )}
               </View>
             </View>
           </>
         ) : null}
       </Animated.View>
 
-      {/* 竖屏：视频下面接剧集详情与选集（B 站那种），把空间用起来 */}
-      {!mini && (!landscape || isTV) ? (
+      {/* 竖屏：视频下面接剧集详情与选集（B 站那种），把空间用起来。
+          TV 上详情在右侧（见 rootTv）；按「全屏」后把它收起来，画面铺满。 */}
+      {!mini && (!landscape || isTV) && !(isTV && fullscreen) ? (
         <ScrollView
           style={[styles.panel, isTV && styles.panelTv]}
           contentContainerStyle={[
@@ -1604,7 +1677,10 @@ function PlayerView({
                       styles.cell,
                       ep.episodeIndex === epIdx && styles.cellActive,
                     ]}
-                    hasTVPreferredFocus={ep.episodeIndex === epIdx}
+                    hasTVPreferredFocus={
+                      episodeFocusPending && ep.episodeIndex === epIdx
+                    }
+                    onFocus={() => setEpisodeFocusPending(false)}
                     onPress={() => {
                       setEpIdx(ep.episodeIndex);
                       setPickIdx(0);

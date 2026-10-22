@@ -161,6 +161,20 @@ function AppShell(): React.JSX.Element {
         : tags,
     );
   }, [tab]);
+  /**
+   * ★ TV 首选焦点只请求一次。
+   *
+   *   `hasTVPreferredFocus` 在 Android 上会被 RN 翻译成 requestFocus()。
+   *   只要这个 prop 一直是 true，每次重渲染都会把焦点**抢回**当前 Tab ——
+   *   用户按方向键刚移到「分类」，一次重渲染就又跳回去（2026-10-22 反馈
+   *   「向 Tab 调整就快速跳到其他」）。所以第一次拿到焦点后立刻撤掉。
+   */
+  const [tabFocusPending, setTabFocusPending] = useState(true);
+  // 从设置页回到 Tab 时把首选焦点重新挂上 —— 否则焦点无处可去。
+  // 播放页收起/展开不经过 route，不会在这里重复抢焦点（小窗自己会请求）。
+  useEffect(() => {
+    if (route.name === 'tabs') setTabFocusPending(true);
+  }, [route.name]);
   const [session, setSession] = useState<PlaySession | null>(null);
   /** 播放器是不是收成了角落里的悬浮小窗 */
   const [mini, setMini] = useState(false);
@@ -651,8 +665,10 @@ function AppShell(): React.JSX.Element {
       label={item.label}
       active={tab === item.id}
       passive={liquidGlass}
-      // ★ TV 上初始/返回时焦点落在当前 Tab 上，而不是被右上角「设置」抢走
-      preferredFocus={tab === item.id}
+      // ★ TV 上初始/返回时焦点落在当前 Tab 上，而不是被右上角「设置」抢走。
+      //   只请求一次（见 tabFocusPending 的说明）—— 一直挂着会把焦点抢回去。
+      preferredFocus={tabFocusPending && tab === item.id}
+      onFocus={() => setTabFocusPending(false)}
       // ★ 显式左右焦点：只在这三个 Tab 之间走，不会被「设置」抢
       nextFocusLeft={tabTags[index - 1]}
       nextFocusRight={tabTags[index + 1]}
@@ -816,6 +832,8 @@ const TabButton = React.forwardRef<
     active: boolean;
     /** TV：挂载时是否请求焦点（当前 Tab 为 true） */
     preferredFocus?: boolean;
+    /** TV：拿到焦点后通知外层撤掉「首选焦点」 */
+    onFocus?: () => void;
     /** TV：左右方向键的显式目标（native tag） */
     nextFocusLeft?: number;
     nextFocusRight?: number;
@@ -843,6 +861,7 @@ const TabButton = React.forwardRef<
     active,
     passive,
     preferredFocus,
+    onFocus,
     nextFocusLeft,
     nextFocusRight,
     onPress,
@@ -877,6 +896,7 @@ const TabButton = React.forwardRef<
       ref={ref}
       style={styles.tab}
       hasTVPreferredFocus={preferredFocus}
+      onFocus={onFocus}
       nextFocusLeft={nextFocusLeft}
       nextFocusRight={nextFocusRight}
       onPress={onPress}

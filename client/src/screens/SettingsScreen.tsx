@@ -42,6 +42,14 @@ export function SettingsScreen({ onBack }: Props): React.JSX.Element {
   const update = useUpdateState();
   /** 端内安装失败的原因（"没允许安装未知应用"最常见） */
   const [installError, setInstallError] = useState<string | null>(null);
+  /**
+   * ★ 「返回」的首选焦点只请求一次。
+   *
+   *   `hasTVPreferredFocus` 在 Android 上会被 RN 翻译成 requestFocus()，
+   *   一直挂着的话每次重渲染都会把焦点抢回「返回」—— 用户往下面几行移动
+   *   焦点时会被反复拽回来。拿到焦点后立刻撤掉。
+   */
+  const [backFocusPending, setBackFocusPending] = useState(true);
 
   /**
    * 进设置页就查一次（`idle` 才查：App 启动时已经静默查过一轮，
@@ -92,8 +100,14 @@ export function SettingsScreen({ onBack }: Props): React.JSX.Element {
 
   return (
     <ScrollView contentContainerStyle={styles.content}>
-      {/* ★ TV：进设置页时焦点先落在「返回」上，而不是被下面某一行抢走 */}
-      <Pressable onPress={onBack} style={styles.back} hasTVPreferredFocus>
+      {/* ★ TV：进设置页时焦点先落在「返回」上，而不是被下面某一行抢走。
+          只请求一次 —— 一直挂着会在每次重渲染时把焦点抢回来。 */}
+      <Pressable
+        onPress={onBack}
+        style={styles.back}
+        hasTVPreferredFocus={backFocusPending}
+        onFocus={() => setBackFocusPending(false)}
+      >
         <Text style={styles.backText}>‹ 返回</Text>
       </Pressable>
 
