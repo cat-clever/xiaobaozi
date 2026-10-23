@@ -33,7 +33,6 @@ import {
 
 import {
   GlassBox,
-  LIQUID_GLASS_AVAILABLE,
   NATIVE_GLASS_AVAILABLE,
 } from './src/components/GlassBox';
 import { isOnHorizontalRow } from './src/components/horizontalRow';
@@ -43,10 +42,6 @@ import { PlayerScreen } from './src/screens/PlayerScreen';
 import { SearchScreen } from './src/screens/SearchScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { ThemeProvider, radius, space, useTheme } from './src/theme';
-import {
-  LiquidGlassView,
-  isLiquidGlassSupported,
-} from '@callstack/liquid-glass';
 import type { Palette } from './src/theme';
 import type { VodItem } from './src/types/schema';
 import { checkForUpdate, useUpdateState } from './src/update/updater';
@@ -121,21 +116,10 @@ function AppShell(): React.JSX.Element {
    *   真玻璃照旧渲染，而底色已经退成 `barSolid`（0.90 不透明），
    *   表现就是"一块不透明的板压在玻璃上"（用户报的原话）。
    */
-  const realGlass =
-    glassOn &&
-    Platform.OS === 'ios' &&
-    (isLiquidGlassSupported as boolean);
-  /**
-   * 本机拿到的是**真·液态玻璃**（iOS 26+）吗。
-   *
-   * 真玻璃是**自己会折光**的材质，跟"模糊 + 垫一层半透明底"是两套做法：
-   * 背后再垫一层半透明黑，那层会被材质一并采样，玻璃就糊成一块板了。
-   * 所以它同时决定两件事：Tab 栏底色要不要透明、玻璃要不要开交互。
-   */
-  const liquidGlass = glassOn && LIQUID_GLASS_AVAILABLE;
+  const nativeGlass = glassOn && NATIVE_GLASS_AVAILABLE;
   const styles = useMemo(
-    () => makeStyles(color, glassOn, liquidGlass, insets.bottom),
-    [color, glassOn, liquidGlass, insets.bottom],
+    () => makeStyles(color, glassOn, nativeGlass, insets.bottom),
+    [color, glassOn, nativeGlass, insets.bottom],
   );
   const [tab, setTab] = useState<Tab>('home');
   const [route, setRoute] = useState<Route>({ name: 'tabs' });
@@ -148,19 +132,6 @@ function AppShell(): React.JSX.Element {
    */
   const tabRefs = useRef<Array<React.ElementRef<typeof Pressable> | null>>([]);
   const [tabTags, setTabTags] = useState<number[]>([]);
-  useEffect(() => {
-    const tags: number[] = [];
-    for (const ref of tabRefs.current) {
-      const tag = ref ? findNodeHandle(ref) : null;
-      if (tag == null) return; // 还没挂上，下一次渲染再说
-      tags.push(tag);
-    }
-    setTabTags(prev =>
-      prev.length === tags.length && prev.every((t, i) => t === tags[i])
-        ? prev
-        : tags,
-    );
-  }, [tab]);
   /**
    * ★ TV 首选焦点只请求一次。
    *
@@ -334,39 +305,20 @@ function AppShell(): React.JSX.Element {
     });
   }, []);
 
-  /**
-   * ★★ 真·液态玻璃下"按的是哪个 Tab" —— 从**落点 x** 反推。
-   *
-   *   为什么非要这么绕：`UIGlassEffect` 的交互反馈（按住扩张 + 起高光）只在
-   *   **触摸打中玻璃自己**时才动。以前按钮垫在玻璃上面、命中优先级更高，
-   *   手指永远先落在按钮上 —— 玻璃收不到触摸，那个反馈就只出现在胶囊空白处，
-   *   按钮上只能靠一层 JS 弹簧糊弄（一眼假）。
-   *
-   *   现在按钮退成纯展示层（`TabButton` 的 `passive`），触摸落到玻璃上 →
-   *   **系统原生动画**；顺便拿 `locationX` 算按的是哪一项。
-   *   `locationX` 是相对**触摸目标**（那层玻璃）的坐标，而玻璃与胶囊同尺寸
-   *   （`styles.tabBar` 没有 padding，玻璃是 `inset 0` 的绝对定位），
-   *   所以它的 x 就等于在胶囊里的 x，跟 `tabRects`（胶囊内坐标）同一套。
-   */
-  const pressTabAt = useCallback(
-    (x: number) => {
-      if (!tabRects.length) return;
-      // 先找落点**所在**的那一项
-      let hit = tabRects.findIndex(r => x >= r.x && x <= r.x + r.width);
-      if (hit < 0) {
-        // 落在边界外（手指滑出按钮一点点）就按最近的**中心**算，
-        // 别让这一下白点
-        hit = 0;
-        for (let i = 0; i < tabRects.length; i += 1) {
-          const center = tabRects[i].x + tabRects[i].width / 2;
-          const best = tabRects[hit].x + tabRects[hit].width / 2;
-          if (Math.abs(center - x) < Math.abs(best - x)) hit = i;
-        }
-      }
-      goToTab(TABS[hit].id);
-    },
-    [tabRects, goToTab],
-  );
+  // 布局完成后再读取 native tag；只依赖 tab 会漏掉首次布局这一次更新。
+  useEffect(() => {
+    const tags: number[] = [];
+    for (const ref of tabRefs.current) {
+      const tag = ref ? findNodeHandle(ref) : null;
+      if (tag == null) return;
+      tags.push(tag);
+    }
+    setTabTags(prev =>
+      prev.length === tags.length && prev.every((t, i) => t === tags[i])
+        ? prev
+        : tags,
+    );
+  }, [tabRects, tab]);
 
   /**
    * 把胶囊挪到某个下标的位置。
@@ -602,32 +554,16 @@ function AppShell(): React.JSX.Element {
   ) : null;
 
   /**
-   * 玻璃材质的**明暗跟应用主题走**（不是系统外观）——
-   * 跟 `GlassBox` 那套约定一致：系统浅色 + App 深色时不指定，
-   * 玻璃会按浅色材质渲染，糊在深色页面上就是一块刺眼的亮。
-   */
-  const glassScheme: 'light' | 'dark' =
-    color.statusBar === 'dark-content' ? 'light' : 'dark';
-
-  /**
    * 选中胶囊 —— 跟着手指走的那一颗。
    *
-   * ★ 两端共用**同一个壳**（`styles.tabIndicator` + 同一组动画值），
-   *   只有**里子**不同：
-   *     · iOS 26 真材质 → 塞一颗 `LiquidGlassView`（会跟整条融成一块）
-   *     · 其余（Android / iOS 26 以下）→ 原来那层实心填充
-   *   这样位置、滑动幅度、"探出整条"的尺度两端**天然一致**，不会各调各的。
-   *
-   * ★ 按住的"扩张"分两层：整条 1.04（`tabScale`，仅非真玻璃），
-   *   这一颗胶囊 1.22 / 1.05（`capsuleScale*`，两端都有）——
-   *   于是胶囊顶出去的那一截会**越过整条的上下边**。
+   * 胶囊使用选中态填充，外层材质统一由 GlassBox 提供。
+   * 按压时由 JS 动画控制胶囊和整条 Tab 的回弹，避免整条 native glass
+   * interactive 带来的整体放大。
    */
   const capsule =
     tabRects.length === TABS.length ? (
       <Animated.View
-        // 真玻璃的交互反馈只交给选中胶囊，不能让整条 Tab 栏一起参与命中。
-        // 非真玻璃分支仍然穿透，避免挡住下面的按钮。
-        pointerEvents={realGlass ? 'auto' : 'none'}
+        pointerEvents="none"
         style={[
           styles.tabIndicator,
           {
@@ -640,21 +576,7 @@ function AppShell(): React.JSX.Element {
           },
         ]}
       >
-        {realGlass ? (
-          /* ★ `LiquidGlassView` **没有 `cornerRadius` 属性** —— 它从自己
-             `style` 的 `borderRadius` 取圆角（见 `LiquidGlassView.mm` 的
-             `layoutSubviews`：`_view.layer.cornerRadius = self.layer.cornerRadius`）。
-             所以圆角写在这里，不写属性。 */
-          <LiquidGlassView
-            style={[StyleSheet.absoluteFill, { borderRadius: radius.pill }]}
-            effect="regular"
-            colorScheme={glassScheme}
-            tintColor={color.glassCapsule}
-            interactive
-          />
-        ) : (
-          <View style={styles.tabIndicatorInner} />
-        )}
+        <View style={styles.tabIndicatorInner} />
       </Animated.View>
     ) : null;
 
@@ -667,14 +589,16 @@ function AppShell(): React.JSX.Element {
       }}
       label={item.label}
       active={tab === item.id}
-      passive={liquidGlass}
+      passive={false}
       // ★ TV 上初始/返回时焦点落在当前 Tab 上，而不是被右上角「设置」抢走。
       //   只请求一次（见 tabFocusPending 的说明）—— 一直挂着会把焦点抢回去。
       preferredFocus={tabFocusPending && tab === item.id}
       onFocus={() => setTabFocusPending(false)}
       // ★ 显式左右焦点：只在这三个 Tab 之间走，不会被「设置」抢
-      nextFocusLeft={tabTags[index - 1]}
-      nextFocusRight={tabTags[index + 1]}
+      // ★ 边界回指自己：最左边继续按左、最右边继续按右时不交给 Android
+      // 空间搜索，否则它可能跳到设置按钮或页面里的其他可聚焦控件。
+      nextFocusLeft={tabTags[index - 1] ?? tabTags[index]}
+      nextFocusRight={tabTags[index + 1] ?? tabTags[index]}
       onPress={() => goToTab(item.id)}
       onPressIn={() => setTabHeld(true)}
       onPressOut={() => setTabHeld(false)}
@@ -760,64 +684,17 @@ function AppShell(): React.JSX.Element {
         <View style={styles.tabBarWrap} pointerEvents="box-none">
           {/* 拖拽手势挂在这一层：内容区不受影响，板块该滚滚 */}
           <View {...tabBarPan.panHandlers}>
-            {/*
-              ★★ 为什么**不用** `LiquidGlassContainerView`（踩过，别再走回去）：
-
-                 `UIGlassContainerEffect` 是**合并**语义 —— 把多颗玻璃融成
-                 **一个形状**。我们的胶囊整颗都躺在整条里面，融完就等于整条本身，
-                 **什么都看不见**（用户 2026-10-16 报「内部的胶囊看不到了」）。
-                 而且它在 contentView 里排在整条**前面**，也就是压在整条玻璃
-                 **下面**，双重地被吃掉。
-
-                 现在改成跟 iOS 26 以下那一支**同一个结构**：胶囊是整条玻璃的
-                 **子节点** —— 于是它画在整条玻璃材质**上面**、三个按钮**下面**，
-                 不会被谁盖住。探出去的那一截靠 `capsuleScale*`（两端同一套）。
-
-                 ★ 但光有玻璃还不够：胶囊跟整条是**同一份材质**，叠在一起看不出
-                   差别。所以给胶囊那颗玻璃上了 `tintColor`（见 `capsule`），
-                   让它明确地亮出来。
-
-                 ★ 这一支**不叠** JS 弹簧（`tabScale`）：系统的按压反馈是真的
-                   （整条会鼓），再加一层缩放就是双重放大，反而更假。
-            */}
-            {realGlass ? (
-              <Pressable focusable={false} onPress={e => pressTabAt(e.nativeEvent.locationX)}>
-                {/* ★ 不传 `cornerRadius`：`LiquidGlassView` 没有这个属性，
-                    圆角由 `styles.tabBar` 的 `borderRadius` 带过去
-                    （见 `LiquidGlassView.mm` 的 `layoutSubviews`）。
-                    ★★ 触摸面 = **玻璃**：按钮那一层已退成纯展示（`passive`），
-                    所以手指一定先打在玻璃上 —— `UIGlassEffect(isInteractive)`
-                    的扩张 / 高光**真的会动**；RN 的 responder 再从玻璃那层
-                    冒泡到这个 `Pressable`，用 `locationX` 反推按的是哪一项。 */}
-                <LiquidGlassView
-                  style={styles.tabBar}
-                  effect="regular"
-                  colorScheme={glassScheme}
-                >
-                  {capsule}
-                  {tabButtons}
-                </LiquidGlassView>
-              </Pressable>
-            ) : (
-              /* ★ 这一层 `Animated.View`（JS 弹簧回弹）只在没有真玻璃时才用：
-                  那种情况下按钮垫在玻璃上面、玻璃收不到触摸，全靠它补手感。 */
-              <Animated.View style={{ transform: [{ scale: tabScale }] }}>
-                {/*
-                  ★ 这里**不再**套整条 Pressable（2026-10-20 TV 反馈：焦点
-                    会跳过三个 Tab 直接跑到右上角「设置」）。单个 Tab 自己就是
-                    Pressable，触摸/遥控器都走它；整条那层在 TV 上只会多一个
-                    焦点层，去掉更干净。
-                */}
-                <GlassBox
-                  style={styles.tabBar}
-                  cornerRadius={radius.pill}
-                  interactive
-                >
-                  {capsule}
-                  {tabButtons}
-                </GlassBox>
-              </Animated.View>
-            )}
+            <Animated.View style={{ transform: [{ scale: tabScale }] }}>
+              <GlassBox
+                style={styles.tabBar}
+                cornerRadius={radius.pill}
+                // 视觉材质统一复用设置页的 GlassView；按压回弹由 Tab 自身动画控制。
+                interactive={false}
+              >
+                {capsule}
+                {tabButtons}
+              </GlassBox>
+            </Animated.View>
           </View>
         </View>
       </SafeAreaView>

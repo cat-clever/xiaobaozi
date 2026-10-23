@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  findNodeHandle,
   Platform,
   ScrollView,
   StyleSheet,
@@ -50,6 +51,24 @@ export function SettingsScreen({ onBack }: Props): React.JSX.Element {
    *   焦点时会被反复拽回来。拿到焦点后立刻撤掉。
    */
   const [backFocusPending, setBackFocusPending] = useState(true);
+  type FocusNode = React.ElementRef<typeof Pressable>;
+  const backRef = React.useRef<FocusNode | null>(null);
+  const modeRefs = React.useRef<Array<FocusNode | null>>([]);
+  const glassRef = React.useRef<FocusNode | null>(null);
+  const checkRef = React.useRef<FocusNode | null>(null);
+  const updateActionRef = React.useRef<FocusNode | null>(null);
+  const [focusTags, setFocusTags] = useState<Record<string, number>>({});
+
+  const captureFocusTag = useCallback(
+    (name: string, node: FocusNode | null) => {
+      const tag = findNodeHandle(node);
+      if (tag == null) return;
+      setFocusTags(previous =>
+        previous[name] === tag ? previous : { ...previous, [name]: tag },
+      );
+    },
+    [],
+  );
 
   /**
    * 进设置页就查一次（`idle` 才查：App 启动时已经静默查过一轮，
@@ -103,10 +122,12 @@ export function SettingsScreen({ onBack }: Props): React.JSX.Element {
       {/* ★ TV：进设置页时焦点先落在「返回」上，而不是被下面某一行抢走。
           只请求一次 —— 一直挂着会在每次重渲染时把焦点抢回来。 */}
       <Pressable
+        ref={backRef}
         onPress={onBack}
         style={styles.back}
         hasTVPreferredFocus={backFocusPending}
         onFocus={() => setBackFocusPending(false)}
+        onLayout={() => captureFocusTag('back', backRef.current)}
       >
         <Text style={styles.backText}>‹ 返回</Text>
       </Pressable>
@@ -118,8 +139,20 @@ export function SettingsScreen({ onBack }: Props): React.JSX.Element {
         {MODES.map((item, index) => (
           <Pressable
             key={item.id}
+            ref={node => {
+              modeRefs.current[index] = node;
+            }}
             style={[styles.row, index > 0 && styles.rowDivided]}
-            onPress={() => setMode(item.id)}>
+            onPress={() => setMode(item.id)}
+            onLayout={() =>
+              captureFocusTag(`mode${index}`, modeRefs.current[index])
+            }
+            nextFocusUp={index === 0 ? focusTags.back : focusTags[`mode${index - 1}`]}
+            nextFocusDown={
+              index === MODES.length - 1
+                ? focusTags.glass
+                : focusTags[`mode${index + 1}`]
+            }>
             <View style={styles.rowMain}>
               <Text style={styles.rowLabel}>{item.label}</Text>
               {item.hint ? <Text style={styles.rowHint}>{item.hint}</Text> : null}
@@ -133,7 +166,13 @@ export function SettingsScreen({ onBack }: Props): React.JSX.Element {
 
       <Text style={styles.sectionTitle}>液态玻璃</Text>
       <GlassBox style={styles.card}>
-        <View style={styles.row}>
+        <Pressable
+          ref={glassRef}
+          style={styles.row}
+          onPress={() => setGlass(!glass)}
+          onLayout={() => captureFocusTag('glass', glassRef.current)}
+          nextFocusUp={focusTags[`mode${MODES.length - 1}`]}
+          nextFocusDown={focusTags.check}>
           <View style={styles.rowMain}>
             <Text style={styles.rowLabel}>玻璃材质</Text>
             <Text style={styles.rowHint}>
@@ -144,11 +183,12 @@ export function SettingsScreen({ onBack }: Props): React.JSX.Element {
           </View>
           <Switch
             value={glass}
-            onValueChange={setGlass}
+            pointerEvents="none"
+            focusable={false}
             trackColor={{ false: color.surfaceStrong, true: color.accent }}
             thumbColor="#FFFFFF"
           />
-        </View>
+        </Pressable>
       </GlassBox>
 
       {/*
@@ -165,9 +205,13 @@ export function SettingsScreen({ onBack }: Props): React.JSX.Element {
             <Text style={styles.rowHint}>{currentLabel}</Text>
           </View>
           <Pressable
+            ref={checkRef}
             onPress={() => void checkForUpdate()}
             disabled={update.phase === 'checking'}
-            style={styles.checkBtn}>
+            style={styles.checkBtn}
+            onLayout={() => captureFocusTag('check', checkRef.current)}
+            nextFocusUp={focusTags.glass}
+            nextFocusDown={focusTags.updateAction}>
             <Text style={styles.checkText}>
               {update.phase === 'checking' ? '检查中…' : '检查更新'}
             </Text>
@@ -221,9 +265,14 @@ export function SettingsScreen({ onBack }: Props): React.JSX.Element {
             <View style={styles.row}>
               {isUpdaterAvailable() ? (
                 <Pressable
+                  ref={updateActionRef}
                   style={[styles.actionBtn, update.installing && styles.actionOff]}
                   disabled={update.progress !== null || update.installing}
-                  onPress={() => void onInstall()}>
+                  onPress={() => void onInstall()}
+                  onLayout={() =>
+                    captureFocusTag('updateAction', updateActionRef.current)
+                  }
+                  nextFocusUp={focusTags.check}>
                   <Text style={styles.actionText}>
                     {update.installing
                       ? '已交给系统安装'
@@ -238,10 +287,15 @@ export function SettingsScreen({ onBack }: Props): React.JSX.Element {
                 </Pressable>
               ) : (
                 <Pressable
+                  ref={updateActionRef}
                   style={styles.actionBtn}
                   onPress={() =>
                     openExternal(manifest.pageUrl || RELEASE_PAGE_URL)
-                  }>
+                  }
+                  onLayout={() =>
+                    captureFocusTag('updateAction', updateActionRef.current)
+                  }
+                  nextFocusUp={focusTags.check}>
                   <Text style={styles.actionText}>打开发布页</Text>
                 </Pressable>
               )}
