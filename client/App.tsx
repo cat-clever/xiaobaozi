@@ -895,7 +895,15 @@ function AppShell(): React.JSX.Element {
       </Animated.View>
     ) : null;
 
-  /** 三个 Tab 按钮。两端渲染的是同一份 —— 免得改了一边忘了另一边 */
+  /**
+   * 三个 Tab 按钮。两端渲染的是同一份 —— 免得改了一边忘了另一边。
+   *
+   * ★★ **量位置必须量外面这个槽位**（`tabSlot`），不能量按钮本身：
+   *   iOS 26 那一支每个 Tab 外面还包了一层 `GlassBox`，按钮的 `onLayout`
+   *   拿到的是「相对于那层包装」的 x —— 三格全是 0。
+   *   结果就是气泡永远回第一格、拖动步长算成 1px、怎么拖都换不了页
+   *   （用户 2026-10-23 报的两个症状其实是同一个根因）。
+   */
   const tabButtons = TABS.map((item, index) => {
     const button = (
       <TabButton
@@ -927,35 +935,40 @@ function AppShell(): React.JSX.Element {
           setPressSpan(null);
           setTabHeld(false, item.id);
         }}
-        onLayout={e => handleTabLayout(index, e)}
       />
     );
 
-    if (!interactiveTabGlass) return button;
-
     return (
-      <GlassBox
+      <View
         key={item.id}
-        style={styles.tabItemGlass}
-        cornerRadius={radius.pill}
-        interactive
-        // ★ 玻璃会 cancel RN 的触摸流 —— 拖动改由原生 pan 送回来
-        panEnabled
-        onPan={e => handleTabPan(index, e)}
-        onTouchStart={e => handleTabPressIn(index, e)}
-        onTouchEnd={() => {
-          setPressSpan(null);
-          setTabHeld(false, item.id);
-          goToTab(item.id);
-        }}
-        onTouchCancel={() => {
-          setPressSpan(null);
-          // 拖动中别清：按压态由 `handleTabPan` 收尾
-          if (!dragging.current) setTabHeld(false, item.id);
-        }}
+        onLayout={e => handleTabLayout(index, e)}
       >
-        {button}
-      </GlassBox>
+        {interactiveTabGlass ? (
+          <GlassBox
+            style={styles.tabItemGlass}
+            cornerRadius={radius.pill}
+            interactive
+            // ★ 玻璃会 cancel RN 的触摸流 —— 拖动改由原生 pan 送回来
+            panEnabled
+            onPan={e => handleTabPan(index, e)}
+            onTouchStart={e => handleTabPressIn(index, e)}
+            onTouchEnd={() => {
+              setPressSpan(null);
+              setTabHeld(false, item.id);
+              goToTab(item.id);
+            }}
+            onTouchCancel={() => {
+              setPressSpan(null);
+              // 拖动中别清：按压态由 `handleTabPan` 收尾
+              if (!dragging.current) setTabHeld(false, item.id);
+            }}
+          >
+            {button}
+          </GlassBox>
+        ) : (
+          button
+        )}
+      </View>
     );
   });
 
@@ -1091,7 +1104,6 @@ const TabButton = React.forwardRef<
     onPressIn?: (e: GestureResponderEvent) => void;
     /** 松开 —— 给外面那层气泡做回弹 */
     onPressOut?: () => void;
-    onLayout: (e: LayoutChangeEvent) => void;
   }
 >(function TabButton(
   {
@@ -1107,7 +1119,6 @@ const TabButton = React.forwardRef<
     onPress,
     onPressIn,
     onPressOut,
-    onLayout,
   },
   ref,
 ): React.JSX.Element {
@@ -1135,7 +1146,7 @@ const TabButton = React.forwardRef<
 
   if (passive) {
     return (
-      <View style={styles.tab} pointerEvents="none" onLayout={onLayout}>
+      <View style={styles.tab} pointerEvents="none">
         {content}
       </View>
     );
@@ -1152,7 +1163,6 @@ const TabButton = React.forwardRef<
       onPress={onPress}
       onPressIn={onPressIn}
       onPressOut={onPressOut}
-      onLayout={onLayout}
     >
       {content}
     </Pressable>
