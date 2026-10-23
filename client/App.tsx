@@ -245,6 +245,20 @@ function AppShell(): React.JSX.Element {
    */
   const nativeGlass = glassOn && NATIVE_GLASS_AVAILABLE;
   /**
+   * 选中气泡**本身**也铺一层原生玻璃材质。
+   *
+   * ★ 参考图里那颗气泡就是真玻璃（不是一块半透明色），所以这里用
+   *   **非交互式**的 `GlassBox`：`interactive` 会 cancel RN 的触摸流
+   *   （拖动切 Tab 就废了，见下面撤掉 per-item 玻璃的说明），
+   *   非交互式那层是 `pointerEvents="none"`，只画材质、不吃手势 ——
+   *   跟手滑动 / 按住放大 / 跨格撑开仍然由外层那几个 `Animated` 值驱动。
+   *
+   * ★ 只给 iOS：Android 的玻璃是「抓背景 + 糊 + 画」，而气泡的**宽度**
+   *   在跨格/收回时是逐帧动画的 —— 每帧 `onSizeChanged` 都重抓一次全屏位图，
+   *   得不偿失。Android 继续用下面那层着色近似。
+   */
+  const nativeBubble = glassOn && NATIVE_GLASS_AVAILABLE && Platform.OS === 'ios';
+  /**
    * ★★ **每个 Tab 各套一层 `interactive` 原生玻璃 —— 不要这么做**（2026-10-23 撤掉）。
    *
    *   iOS 26 的 `UIGlassEffect.isInteractive` 自带手势识别器：按住会扩张、
@@ -806,6 +820,13 @@ function AppShell(): React.JSX.Element {
         <Animated.View
           style={[styles.tabBubbleLit, { opacity: capsulePress }]}
         />
+        {/*
+          真玻璃材质。垫在着色层上面 —— 材质采样到的就是那层灰/白，
+          观感等于给玻璃上了个 tint；而且它是非交互的，不吃拖动。
+        */}
+        {nativeBubble ? (
+          <GlassBox style={styles.tabBubbleGlass} cornerRadius={radius.pill} />
+        ) : null}
       </Animated.View>
     ) : null;
 
@@ -1128,6 +1149,14 @@ const makeStyles = (
       //   气泡明显收在整条上下边里面。
       top: BUBBLE_INSET,
       bottom: BUBBLE_INSET,
+    },
+    /** 铺在气泡里的原生玻璃材质层（非交互，只画不吃手势） */
+    tabBubbleGlass: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
     },
     /** 静止态：一层很淡的灰（亮）/ 白釉（深），不描边、不投影 */
     tabBubbleInner: {
