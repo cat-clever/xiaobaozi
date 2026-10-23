@@ -116,6 +116,9 @@ final class GlassView: UIView {
 
   private var panRecognizer: UIPanGestureRecognizer?
   private var fallbackTimer: Timer?
+  /// 第一次 `didBecomeActive` 之后补装过一次没有（只补一次，避免每次切前台都闪）
+  private var didReinstallOnActivation = false
+  private var activationObserver: NSObjectProtocol?
 
   override init(frame: CGRect) {
     super.init(frame: frame)
@@ -134,6 +137,25 @@ final class GlassView: UIView {
     // ★ 这里的调用**装不出真玻璃**（视图还没布局），只负责把低版本的模糊
     //   和主题色定下来；iOS 26 的真玻璃交给 `layoutSubviews`。
     applyAppearance()
+
+    /**
+     * ★★ 保险：App 真正 active 之后**重装一次**。
+     *
+     *   启动那一帧窗口可能还不是 key —— 那时装的玻璃会被 UIKit 丢掉。
+     *   `didBecomeActive` 时窗口一定已经上屏，在这里清掉重装最稳。
+     *   只补一次：之后每次切前台都重装会闪。
+     */
+    activationObserver = NotificationCenter.default.addObserver(
+      forName: UIApplication.didBecomeActiveNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      guard let self, GlassView.glassEffectAvailable else { return }
+      guard !self.didReinstallOnActivation else { return }
+      self.didReinstallOnActivation = true
+      self.glassInstalled = false
+      self.setNeedsLayout()
+    }
   }
 
   required init?(coder: NSCoder) {
@@ -179,6 +201,9 @@ final class GlassView: UIView {
 
   deinit {
     visibilityLink?.invalidate()
+    if let activationObserver {
+      NotificationCenter.default.removeObserver(activationObserver)
+    }
   }
 
   /**
@@ -191,8 +216,12 @@ final class GlassView: UIView {
    *      也别在"父级还在淡入"的时候装。
    */
   private var canRenderGlass: Bool {
-    // ★ 仅要求：在 window 里（opacity 门控去掉——suspect 这道门把 legit 安装也卡死）。
-    guard window != nil else { return false }
+    // ★ 必须在窗口里，而且窗口**已经是 key window**。
+    //   App 刚启动时 view 可能已经挂进 window，但窗口还没成为 key / 还没真正上屏 ——
+    //   这个时刻装 `UIGlassEffect`，UIKit 会静默跳过，之后永远不补。
+    guard let window else { return false }
+    if !window.isKeyWindow { return false }
+    if bounds.width <= 0 || bounds.height <= 0 { return false }
     return true
   }
 
@@ -249,9 +278,17 @@ final class GlassView: UIView {
     // 部署目标是 iOS 15.1，所以这里还得来一次编译期的 `#available`；
     // 运行期那层判断在 `glassEffectAvailable` 里（测试版上会崩的那次）
     if #available(iOS 26.0, *) {
-      effectView.effect = UIVisualEffect()
       let glass = UIGlassEffect(style: .regular)
       glass.isInteractive = interactive
+      // ★★ **第一次安装**（effect 还是 nil）直接赋真玻璃。
+      //   原来无条件先赋一个空的 `UIVisualEffect()` 再赋玻璃 ——
+      //   UIKit 会把两次赋值当成一次材质过渡，最终可能停在"空材质"上：
+      //   玻璃永远画不出来，而且之后再怎么刷新都不补（用户 2026-10-23 实测：
+      //   整条栏全透明、只有按下时 JS 那层白底可见）。
+      //   "先清空再赋值"只在**已经装过**、需要换材质时才需要（见上面的注释）。
+      if effectView.effect != nil {
+        effectView.effect = UIVisualEffect()
+      }
       effectView.effect = glass
     }
   }
