@@ -24,14 +24,23 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Pressable } from './src/components/FocusablePressable';
-import type { GestureResponderEvent, LayoutChangeEvent } from 'react-native';
+import type {
+  GestureResponderEvent,
+  LayoutChangeEvent,
+  NativeSyntheticEvent,
+} from 'react-native';
 import {
   SafeAreaProvider,
   SafeAreaView,
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 
-import { GlassBox, NATIVE_GLASS_AVAILABLE } from './src/components/GlassBox';
+import {
+  GlassBox,
+  LIQUID_GLASS_AVAILABLE,
+  NATIVE_GLASS_AVAILABLE,
+} from './src/components/GlassBox';
+import type { NativePanEvent } from './src/components/GlassBox';
 import { isOnHorizontalRow } from './src/components/horizontalRow';
 import { isRemoteMode } from './src/tv/inputMode';
 import { CategoryScreen } from './src/screens/CategoryScreen';
@@ -66,10 +75,13 @@ const ICON = 26;
  *   · **按下**：气泡放大（`capsuleScaleX/Y`）**涨出整条上下边**，
  *     同时叠一层亮白 + 投影（`tabBubbleLit` 的 opacity 由 `capsulePress` 驱动）。
  *
- *   横向 `BUBBLE_X` 两边都探出一截 —— 两种状态都不贴着格子的左右边。
- *   涨出栏外能画出来，靠的是 `tabBar` 上的 `overflow: 'visible'`。
+ *   横向**不外扩**（`BUBBLE_X = 0`）：静止时气泡正好是一格宽，
+ *   两边不会压到相邻的格子，最左/最右也不会从整条的圆角里戳出去
+ *   （用户 2026-10-23 报「胶囊左右两边静止状态下会超出 tab」）。
+ *   要"探出去"只在**按下**时靠 `capsuleScale` 做。
+ *   纵向涨出栏外能画出来，靠的是 `tabBar` 上的 `overflow: 'visible'`。
  */
-const BUBBLE_X = 8;
+const BUBBLE_X = 0;
 const BUBBLE_INSET = 4;
 /**
  * 按在离格子边界多近时，气泡**横跨相邻两格**。
@@ -259,16 +271,20 @@ function AppShell(): React.JSX.Element {
    */
   const nativeBubble = glassOn && NATIVE_GLASS_AVAILABLE && Platform.OS === 'ios';
   /**
-   * ★★ **每个 Tab 各套一层 `interactive` 原生玻璃 —— 不要这么做**（2026-10-23 撤掉）。
+   * ★★ 每格套一层 `interactive` 原生玻璃（iOS 26 + 玻璃开启）。
    *
-   *   iOS 26 的 `UIGlassEffect.isInteractive` 自带手势识别器：按住会扩张、
-   *   但它同时把 RN 的触摸流 **cancel** 掉（`cancelsTouchesInView`）。
-   *   点击不受影响（手势不激活），可是"按住胶囊左右拖 = 切 Tab"直接废掉 ——
-   *   `tabBarPan` 的 `onMoveShouldSetPanResponder` 再也收不到 move 事件。
+   *   `UIGlassEffect.isInteractive` 自带手势识别器：按住会扩张，
+   *   但它同时把 RN 的触摸流 **cancel** 掉（`cancelsTouchesInView`）——
+   *   "按住胶囊左右拖 = 切 Tab"在 JS 侧就收不到 move 了。
    *
-   *   取舍：拖动切 Tab 是核心交互，保留它；按压扩张改回 JS 那套
-   *   （整条 `tabScale` + 气泡 `capsuleScale`），观感差别很小。
+   *   ★ 解法不是关掉它，而是在同一层玻璃上**再挂一个原生 pan**
+   *     （`GlassView.swift` 的 `panEnabled` / `onPan`）：
+   *     玻璃自己的按压动画照旧，位移由原生转给 JS，
+   *     跟手 / 落位复用 `moveDrag` / `endDrag`，手感跟 Android 一致。
+   *   ★ 所以这条**只给 iOS 26**：Android 的玻璃本来就不交互，走原来的 JS PanResponder。
    */
+  const interactiveTabGlass =
+    glassOn && Platform.OS === 'ios' && (LIQUID_GLASS_AVAILABLE as boolean);
   const styles = useMemo(
     () => makeStyles(color, glassOn, nativeGlass, insets.bottom),
     [color, glassOn, nativeGlass, insets.bottom],
@@ -455,17 +471,14 @@ function AppShell(): React.JSX.Element {
   const capsuleW = useRef(new Animated.Value(0)).current;
   /** 第一次布局时直接给值，不要从 0 弹出来 */
   const capsuleInited = useRef(false);
+  /** 原生拖动进行中 —— 玻璃会 cancel 触摸，别把按压态也一起清了 */
+  const dragging = useRef(false);
   /** 按下时气泡要跨哪两格（null = 只盖一格） */
   const [pressSpan, setPressSpan] = useState<{
     from: number;
     to: number;
   } | null>(null);
-  /**
-   * 胶囊的**宽度** —— 单独一条值才做得动"流淌"那一下：
-   * 切换时先把宽度抻长（补齐两格之间的距离），位置挪过去再收回来。
-   * ★ 只给宽度一条值不够，左右两条边要能**分别**动，见 `settleCapsule`。
-   */
-  /** 胶囊左边缘当前该在哪 —— 拖拽要从这个值算起 */
+  /** 气泡左边缘当前该在哪 —— 拖拽要从这个值算起（按下时对齐到被按的那一格） */
   const capsuleTarget = useRef(0);
 
   const handleTabLayout = useCallback((index: number, e: LayoutChangeEvent) => {
@@ -521,6 +534,10 @@ function AppShell(): React.JSX.Element {
           }
         }
       }
+      // ★ 拖拽是从"气泡当前停在哪"算起的 —— 在按下的**这一刻**定下来，
+      //   之后跨格状态怎么变都不再动它（否则拖到一半起点会被改掉）。
+      const anchor = span ? tabRects[span.from] : rect;
+      if (anchor) capsuleTarget.current = anchor.x;
       setPressSpan(span);
       setTabHeld(true, TABS[index].id);
     },
@@ -602,10 +619,18 @@ function AppShell(): React.JSX.Element {
     [tabRects, pageX, capsuleL, capsuleW, width],
   );
 
-  // 点 Tab 切过去时，胶囊跟着滑
+  /**
+   * ★★ 气泡落位**只认状态**：没在按住时，永远对齐当前 Tab。
+   *
+   *   之前是"点 Tab 切过去时滑一下 + 松开时再收一下"，两处回调谁后跑谁说了算 ——
+   *   回调顺序一变（或按下被 cancel 没走 onPressOut），气泡就会停在别的格上
+   *   （用户 2026-10-23 报：首页是选中的，气泡却停在搜索）。
+   *   现在只有一个出口：`pressedTab == null` 就落位到 `tab`，不会有两股力抢。
+   */
   useEffect(() => {
+    if (pressedTab != null) return;
     settleCapsule(tabIndexOf(tab));
-  }, [tab, tabIndexOf, settleCapsule]);
+  }, [pressedTab, tab, tabIndexOf, settleCapsule]);
 
   /**
    * ★★ 把**页面和胶囊一起**摆到 `indexFloat` 这个连续位置上（0 ~ N-1 之间的小数）。
@@ -624,49 +649,89 @@ function AppShell(): React.JSX.Element {
    * `onStartShouldSetPanResponder` 返回 false、只在横向位移超过阈值时才接管：
    * 轻点仍然走 Tab 自己的 Pressable（点哪个切哪个），拖动才由这里接管。
    */
+  /**
+   * 拖动中：把位移换算成"胶囊走到哪一格"，**页面同步跟手**。
+   * ★ PanResponder（Android / iOS 25 及以下）和原生 pan（iOS 26）共用这一份。
+   */
+  const moveDrag = useCallback(
+    (dx: number) => {
+      const first = tabRects[0]?.x ?? 0;
+      const last = tabRects[tabRects.length - 1]?.x ?? 0;
+      const stride = (tabRects[1]?.x ?? first) - first || 1;
+      const next = Math.min(last, Math.max(first, capsuleTarget.current + dx));
+      syncTo((next - first) / stride);
+    },
+    [tabRects, syncTo],
+  );
+
+  /** 松手：按胶囊**当前停在哪**找最近的 Tab，换过去 / 弹回 */
+  const endDrag = useCallback(
+    (dx: number) => {
+      if (!tabRects.length) return;
+      const moved = capsuleTarget.current + dx;
+      let nearest = 0;
+      for (let i = 0; i < tabRects.length; i += 1) {
+        if (
+          Math.abs(tabRects[i].x - moved) <
+          Math.abs(tabRects[nearest].x - moved)
+        ) {
+          nearest = i;
+        }
+      }
+      const target = TABS[nearest];
+      if (target.id !== tab) {
+        goToTab(target.id); // effect 里会把两边都弹到位
+      } else {
+        // 没换 Tab —— 胶囊和**页面**都要弹回原位
+        // （拖动时页面是跟着走的，只弹胶囊会把页面留在半路）
+        settleCapsule(nearest);
+        settleTo(nearest);
+      }
+    },
+    [tabRects, tab, goToTab, settleCapsule, settleTo],
+  );
+
+  /**
+   * ★ iOS 26 的原生拖动事件（`GlassView.panEnabled`）。
+   *
+   *   触摸流被玻璃 cancel 掉之后，`onTouchEnd` 不会来，所以**换 Tab 必须在这里收尾**；
+   *   点击（没拖动）仍然走 `onTouchEnd`。
+   */
+  const handleTabPan = useCallback(
+    (index: number, e: NativeSyntheticEvent<NativePanEvent>) => {
+      const { state, translationX } = e.nativeEvent;
+      const id = TABS[index].id;
+      if (state === 0) {
+        dragging.current = true;
+        // 拖动时气泡跟着手指走，不需要"跨格"那个展开态
+        setPressSpan(null);
+        // 玻璃把触摸 cancel 之后按压态会掉，这里补回来（气泡保持放大）
+        setTabHeld(true, id);
+        return;
+      }
+      if (state === 1) {
+        moveDrag(translationX);
+        return;
+      }
+      dragging.current = false;
+      setTabHeld(false, id);
+      if (state === 2) endDrag(translationX);
+      else settleCapsule(tabIndexOf(tab));
+    },
+    [moveDrag, endDrag, setTabHeld, settleCapsule, tabIndexOf, tab],
+  );
+
   const tabBarPan = useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => false,
         onMoveShouldSetPanResponder: (_e, g) =>
           Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy),
-        onPanResponderMove: (_e, g) => {
-          const first = tabRects[0]?.x ?? 0;
-          const last = tabRects[tabRects.length - 1]?.x ?? 0;
-          const stride = (tabRects[1]?.x ?? first) - first || 1;
-          const next = Math.min(
-            last,
-            Math.max(first, capsuleTarget.current + g.dx),
-          );
-          // ★ 页面同步跟手 —— 胶囊在 Tab 空间走了多少，页面就在页空间走多少
-          syncTo((next - first) / stride);
-        },
-        onPanResponderRelease: (_e, g) => {
-          if (!tabRects.length) return;
-          // 按胶囊**当前停在哪**找最近的 Tab，比拿位移除以宽度准
-          const moved = capsuleTarget.current + g.dx;
-          let nearest = 0;
-          for (let i = 0; i < tabRects.length; i += 1) {
-            if (
-              Math.abs(tabRects[i].x - moved) <
-              Math.abs(tabRects[nearest].x - moved)
-            ) {
-              nearest = i;
-            }
-          }
-          const target = TABS[nearest];
-          if (target.id !== tab) {
-            goToTab(target.id); // effect 里会把两边都弹到位
-          } else {
-            // 没换 Tab —— 胶囊和**页面**都要弹回原位
-            // （拖动时页面是跟着走的，只弹胶囊会把页面留在半路）
-            settleCapsule(nearest);
-            settleTo(nearest);
-          }
-        },
+        onPanResponderMove: (_e, g) => moveDrag(g.dx),
+        onPanResponderRelease: (_e, g) => endDrag(g.dx),
         onPanResponderTerminate: () => settleCapsule(tabIndexOf(tab)),
       }),
-    [tabRects, tab, goToTab, settleCapsule, settleTo, syncTo, tabIndexOf],
+    [moveDrag, endDrag, settleCapsule, tabIndexOf, tab],
   );
 
 
@@ -831,38 +896,68 @@ function AppShell(): React.JSX.Element {
     ) : null;
 
   /** 三个 Tab 按钮。两端渲染的是同一份 —— 免得改了一边忘了另一边 */
-  const tabButtons = TABS.map((item, index) => (
-    <TabButton
-      key={item.id}
-      ref={node => {
-        tabRefs.current[index] = node;
-      }}
-      name={item.id}
-      label={item.label}
-      active={tab === item.id}
-      pressed={
-        pressedTab === item.id ||
-        (pressSpan != null && index >= pressSpan.from && index <= pressSpan.to)
-      }
-      // ★ TV 上初始/返回时焦点落在当前 Tab 上，而不是被右上角「设置」抢走。
-      preferredFocus={tabFocusPending && tab === item.id}
-      onFocus={() => setTabFocusPending(false)}
-      // ★ 显式左右焦点：只在这三个 Tab 之间走，不会被「设置」抢
-      // ★ 边界回指自己：最左边继续按左、最右边继续按右时不交给 Android
-      // 空间搜索，否则它可能跳到设置按钮或页面里的其他可聚焦控件。
-      nextFocusLeft={tabTags[index - 1] ?? tabTags[index]}
-      nextFocusRight={tabTags[index + 1] ?? tabTags[index]}
-      onPress={() => goToTab(item.id)}
-      onPressIn={e => handleTabPressIn(index, e)}
-      onPressOut={() => {
-        setPressSpan(null);
-        setTabHeld(false, item.id);
-        // 没换 Tab（比如按的是当前格）也要把跨格撑开的气泡收回去
-        settleCapsule(tabIndexOf(tab));
-      }}
-      onLayout={e => handleTabLayout(index, e)}
-    />
-  ));
+  const tabButtons = TABS.map((item, index) => {
+    const button = (
+      <TabButton
+        key={item.id}
+        ref={node => {
+          tabRefs.current[index] = node;
+        }}
+        name={item.id}
+        label={item.label}
+        active={tab === item.id}
+        pressed={
+          pressedTab === item.id ||
+          (pressSpan != null && index >= pressSpan.from && index <= pressSpan.to)
+        }
+        // ★ 交互玻璃那一支是纯展示，触摸交给玻璃（见 `passive` 的注释）
+        passive={interactiveTabGlass}
+        // ★ TV 上初始/返回时焦点落在当前 Tab 上，而不是被右上角「设置」抢走。
+        preferredFocus={tabFocusPending && tab === item.id}
+        onFocus={() => setTabFocusPending(false)}
+        // ★ 显式左右焦点：只在这三个 Tab 之间走，不会被「设置」抢
+        // ★ 边界回指自己：最左边继续按左、最右边继续按右时不交给 Android
+        // 空间搜索，否则它可能跳到设置按钮或页面里的其他可聚焦控件。
+        nextFocusLeft={tabTags[index - 1] ?? tabTags[index]}
+        nextFocusRight={tabTags[index + 1] ?? tabTags[index]}
+        onPress={() => goToTab(item.id)}
+        onPressIn={e => handleTabPressIn(index, e)}
+        // ★ 只清状态：气泡落位交给上面那个 effect，别在这里再抢一次
+        onPressOut={() => {
+          setPressSpan(null);
+          setTabHeld(false, item.id);
+        }}
+        onLayout={e => handleTabLayout(index, e)}
+      />
+    );
+
+    if (!interactiveTabGlass) return button;
+
+    return (
+      <GlassBox
+        key={item.id}
+        style={styles.tabItemGlass}
+        cornerRadius={radius.pill}
+        interactive
+        // ★ 玻璃会 cancel RN 的触摸流 —— 拖动改由原生 pan 送回来
+        panEnabled
+        onPan={e => handleTabPan(index, e)}
+        onTouchStart={e => handleTabPressIn(index, e)}
+        onTouchEnd={() => {
+          setPressSpan(null);
+          setTabHeld(false, item.id);
+          goToTab(item.id);
+        }}
+        onTouchCancel={() => {
+          setPressSpan(null);
+          // 拖动中别清：按压态由 `handleTabPan` 收尾
+          if (!dragging.current) setTabHeld(false, item.id);
+        }}
+      >
+        {button}
+      </GlassBox>
+    );
+  });
 
   if (route.name === 'settings') {
     return (
@@ -983,6 +1078,14 @@ const TabButton = React.forwardRef<
     /** TV：左右方向键的显式目标（native tag） */
     nextFocusLeft?: number;
     nextFocusRight?: number;
+    /**
+     * ★ **纯展示**：只负责画，完全不接收触摸（iOS 26 的交互玻璃那一支用）。
+     *
+     *   触摸要落到**玻璃自己身上**，系统的按压扩张才会动；所以这一层用
+     *   `pointerEvents="none"` 让开（它会把原生 `userInteractionEnabled` 置 false）。
+     *   拖动则由玻璃上的原生 pan 转给 JS（见 `handleTabPan`）。
+     */
+    passive?: boolean;
     onPress: () => void;
     /** 按住 —— 外层要拿落点判断气泡要不要跨格（见 `handleTabPressIn`） */
     onPressIn?: (e: GestureResponderEvent) => void;
@@ -996,6 +1099,7 @@ const TabButton = React.forwardRef<
     label,
     active,
     pressed = false,
+    passive,
     preferredFocus,
     onFocus,
     nextFocusLeft,
@@ -1028,6 +1132,14 @@ const TabButton = React.forwardRef<
       </Text>
     </>
   );
+
+  if (passive) {
+    return (
+      <View style={styles.tab} pointerEvents="none" onLayout={onLayout}>
+        {content}
+      </View>
+    );
+  }
 
   return (
     <Pressable
@@ -1149,6 +1261,10 @@ const makeStyles = (
       //   气泡明显收在整条上下边里面。
       top: BUBBLE_INSET,
       bottom: BUBBLE_INSET,
+    },
+    tabItemGlass: {
+      borderRadius: radius.pill,
+      overflow: 'visible',
     },
     /** 铺在气泡里的原生玻璃材质层（非交互，只画不吃手势） */
     tabBubbleGlass: {

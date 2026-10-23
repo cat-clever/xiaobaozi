@@ -93,6 +93,28 @@ final class GlassView: UIView {
     }
   }
 
+  /**
+   * ★★ 原生拖动转发（只给 Tab 栏的每一格开）。
+   *
+   *   iOS 26 的交互玻璃自带手势识别器，按住拖动时会把 RN 的触摸流 cancel 掉
+   *   （`cancelsTouchesInView`）—— 于是「拖动切 Tab」在 JS 侧收不到 move。
+   *
+   *   这里在**同一个视图**上再挂一个自己的 `UIPanGestureRecognizer`，
+   *   并把 `shouldRecognizeSimultaneouslyWith` 放开：玻璃自己的按压动画照旧，
+   *   我们这边把 `translationX` 通过 `onPan` 事件转给 JS，
+   *   胶囊和页面的跟手逻辑复用原来那一套（`syncTo` / `settleCapsule`）。
+   */
+  @objc var panEnabled: Bool = false {
+    didSet {
+      guard panEnabled != oldValue else { return }
+      updatePanGesture()
+    }
+  }
+
+  /** 拖动事件：state 0=began 1=changed 2=ended 3=cancelled */
+  @objc var onPan: RCTDirectEventBlock?
+
+  private var panRecognizer: UIPanGestureRecognizer?
   private var fallbackTimer: Timer?
 
   override init(frame: CGRect) {
@@ -255,6 +277,39 @@ final class GlassView: UIView {
     if canRenderGlass { setNeedsLayout() }
   }
 
+  private func updatePanGesture() {
+    if panEnabled, panRecognizer == nil {
+      let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+      pan.delegate = self
+      // 我们自己**不**取消触摸：RN 那边的点击路径（onTouchEnd）还要用
+      pan.cancelsTouchesInView = false
+      pan.delaysTouchesBegan = false
+      addGestureRecognizer(pan)
+      panRecognizer = pan
+    } else if !panEnabled, let pan = panRecognizer {
+      removeGestureRecognizer(pan)
+      panRecognizer = nil
+    }
+  }
+
+  @objc private func handlePan(_ g: UIPanGestureRecognizer) {
+    guard let onPan else { return }
+    let state: Int
+    switch g.state {
+    case .began: state = 0
+    case .changed: state = 1
+    case .ended: state = 2
+    default: state = 3
+    }
+    let p = g.translation(in: self)
+    // CGFloat 显式转 Double：字典要桥成 NSDictionary，别让桥接层猜
+    onPan([
+      "state": state,
+      "translationX": Double(p.x),
+      "translationY": Double(p.y),
+    ])
+  }
+
   private func applyAppearance() {
     let isLight = (glassStyle as String) == "light"
     let radius = CGFloat(truncating: cornerRadius)
@@ -318,6 +373,19 @@ final class GlassView: UIView {
     }
     return false
   }()
+}
+
+extension GlassView: UIGestureRecognizerDelegate {
+  /**
+   * ★ 必须允许**同时识别**：玻璃自己的按压手势和我们的 pan 各跑各的，
+   *   一个负责材质扩张，一个负责把位移转给 JS。
+   */
+  func gestureRecognizer(
+    _ gestureRecognizer: UIGestureRecognizer,
+    shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+  ) -> Bool {
+    true
+  }
 }
 
 /** `CADisplayLink` 会强引用 target —— 用弱代理，别把视图钉住 */

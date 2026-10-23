@@ -1,6 +1,11 @@
 import React from 'react';
 import { Platform, StyleSheet, UIManager, View, requireNativeComponent } from 'react-native';
-import type { StyleProp, ViewProps, ViewStyle } from 'react-native';
+import type {
+  NativeSyntheticEvent,
+  StyleProp,
+  ViewProps,
+  ViewStyle,
+} from 'react-native';
 
 import { radius as radiusScale, useTheme } from '../theme';
 
@@ -20,15 +25,33 @@ interface Props {
    *   children 由 GlassBox 作为 React 兄弟层放在玻璃上方，保证 RN 交互稳定。
    */
   interactive?: boolean;
+  /**
+   * ★ 原生拖动转发（只给 Tab 栏的每一格开）。
+   *
+   *   交互玻璃会 cancel RN 的触摸流，拖动事件得从原生那边送回来：
+   *   原生 `UIPanGestureRecognizer` 把 `translationX` 通过 `onPan` 发给 JS，
+   *   胶囊/页面的跟手逻辑照旧在 JS 里跑。
+   */
+  panEnabled?: boolean;
+  onPan?: (e: NativeSyntheticEvent<NativePanEvent>) => void;
   onTouchStart?: ViewProps['onTouchStart'];
   onTouchEnd?: ViewProps['onTouchEnd'];
   onTouchCancel?: ViewProps['onTouchCancel'];
+}
+
+export interface NativePanEvent {
+  /** 0=began 1=changed 2=ended 3=cancelled */
+  state: number;
+  translationX: number;
+  translationY: number;
 }
 
 type NativeGlassProps = ViewProps & {
   cornerRadius?: number;
   glassStyle?: string;
   interactive?: boolean;
+  panEnabled?: boolean;
+  onPan?: (e: NativeSyntheticEvent<NativePanEvent>) => void;
 };
 
 const FILL: ViewStyle = { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 };
@@ -107,6 +130,8 @@ export function GlassBox({
   cornerRadius,
   enabled,
   interactive,
+  panEnabled,
+  onPan,
   onTouchStart,
   onTouchEnd,
   onTouchCancel,
@@ -142,6 +167,8 @@ export function GlassBox({
           cornerRadius={corner}
           glassStyle={glassStyle}
           interactive={pressable || undefined}
+          panEnabled={panEnabled || undefined}
+          onPan={onPan}
           pointerEvents={pressable ? 'auto' : 'none'}
           onTouchStart={onTouchStart}
           onTouchEnd={onTouchEnd}
