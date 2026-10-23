@@ -1883,7 +1883,11 @@ const makeStyles = (color: Palette) =>
     miniCloseText: { color: '#fff', fontSize: 12, lineHeight: 14 },
     // ★ TV：视频在左、详情/选集在右，不再靠"转竖屏"去看详情
     rootTv: { flexDirection: 'row' },
-    stageTv: { width: 'auto', flex: 1 },
+    // ★ TV：视频在左、详情/选集在右，比例 **3:1**（视频占 3/4）。
+    //   原先面板写的是 38%，视频只剩六成（用户 2026-10-22 反馈「播放占得太少、
+    //   列表占得太宽」）。用 flex 3:1 而不是百分比：换任何分辨率的电视，
+    //   比例都不变。
+    stageTv: { width: 'auto', flex: 3 },
     stage: { width: '100%', backgroundColor: '#000', justifyContent: 'center' },
     stageFull: { flex: 1 },
     video: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
@@ -2010,7 +2014,8 @@ const makeStyles = (color: Palette) =>
     chipText: { color: '#fff', fontSize: 12 },
     // 竖屏视频下方那块：剧集详情 + 选集
     panel: { flex: 1, backgroundColor: color.bg },
-    panelTv: { flex: 0, width: '38%' },
+    // 与 stageTv 的 flex 3 配对：视频 3 份、面板 1 份。
+    panelTv: { flex: 1 },
     panelContent: { padding: space.lg, paddingBottom: space.xl * 2 },
     infoRow: { flexDirection: 'row', gap: space.lg },
     poster: {
