@@ -24,19 +24,16 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Pressable } from './src/components/FocusablePressable';
-import type { LayoutChangeEvent } from 'react-native';
+import type { GestureResponderEvent, LayoutChangeEvent } from 'react-native';
 import {
   SafeAreaProvider,
   SafeAreaView,
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 
-import {
-  GlassBox,
-  LIQUID_GLASS_AVAILABLE,
-  NATIVE_GLASS_AVAILABLE,
-} from './src/components/GlassBox';
+import { GlassBox, NATIVE_GLASS_AVAILABLE } from './src/components/GlassBox';
 import { isOnHorizontalRow } from './src/components/horizontalRow';
+import { isRemoteMode } from './src/tv/inputMode';
 import { CategoryScreen } from './src/screens/CategoryScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { PlayerScreen } from './src/screens/PlayerScreen';
@@ -61,14 +58,28 @@ const TAB_BAR_BOTTOM = space.xl;
 /** Tab 图标的画布边长 —— 图标本身按 22pt 左右画，留一点呼吸 */
 const ICON = 26;
 /**
- * 选中气泡比 Tab 格**多探出去**多少。
+ * 选中气泡的几何（2026-10-23 按用户给的两张状态图定）。
  *
- * ★ 参考图里那颗"玻璃珠"不是贴着格子的：横向各多一截、纵向**越过整条
- *   Tab 栏的上下边**（`tabBar` 的 `overflow: 'visible'` 就是为它留的）。
- *   按住时再靠 `capsuleScale` 继续放大，就是第二张参考图那个观感。
+ * ★★ 两个状态是分开的：
+ *   · **静止**：气泡**收在整条里面**（纵向各内缩 `BUBBLE_INSET`），
+ *     是一层很淡的灰（亮色）/ 白釉（深色），不描边、不投影；
+ *   · **按下**：气泡放大（`capsuleScaleX/Y`）**涨出整条上下边**，
+ *     同时叠一层亮白 + 投影（`tabBubbleLit` 的 opacity 由 `capsulePress` 驱动）。
+ *
+ *   横向 `BUBBLE_X` 两边都探出一截 —— 两种状态都不贴着格子的左右边。
+ *   涨出栏外能画出来，靠的是 `tabBar` 上的 `overflow: 'visible'`。
  */
 const BUBBLE_X = 8;
-const BUBBLE_Y = 5;
+const BUBBLE_INSET = 4;
+/**
+ * 按在离格子边界多近时，气泡**横跨相邻两格**。
+ *
+ * ★ 参考图里"按在两格中间"是另一种状态：气泡变成一颗盖住两格的大玻璃，
+ *   两格的图标/文字一起变蓝。我们的 Tab 是相邻的两个 Pressable，
+ *   所以只能靠**落点**判断：离边界 `SPAN_ZONE` 以内就算跨格。
+ *   28pt 的横向留白里，边界两侧各 22pt 都算。
+ */
+const SPAN_ZONE = 22;
 
 /**
  * 底部 Tab 图标 —— **纯 View 拼的**，不引 `react-native-svg`。
@@ -233,8 +244,17 @@ function AppShell(): React.JSX.Element {
    *   表现就是"一块不透明的板压在玻璃上"（用户报的原话）。
    */
   const nativeGlass = glassOn && NATIVE_GLASS_AVAILABLE;
-  const interactiveTabGlass =
-    glassOn && Platform.OS === 'ios' && (LIQUID_GLASS_AVAILABLE as boolean);
+  /**
+   * ★★ **每个 Tab 各套一层 `interactive` 原生玻璃 —— 不要这么做**（2026-10-23 撤掉）。
+   *
+   *   iOS 26 的 `UIGlassEffect.isInteractive` 自带手势识别器：按住会扩张、
+   *   但它同时把 RN 的触摸流 **cancel** 掉（`cancelsTouchesInView`）。
+   *   点击不受影响（手势不激活），可是"按住胶囊左右拖 = 切 Tab"直接废掉 ——
+   *   `tabBarPan` 的 `onMoveShouldSetPanResponder` 再也收不到 move 事件。
+   *
+   *   取舍：拖动切 Tab 是核心交互，保留它；按压扩张改回 JS 那套
+   *   （整条 `tabScale` + 气泡 `capsuleScale`），观感差别很小。
+   */
   const styles = useMemo(
     () => makeStyles(color, glassOn, nativeGlass, insets.bottom),
     [color, glassOn, nativeGlass, insets.bottom],
@@ -311,18 +331,19 @@ function AppShell(): React.JSX.Element {
    *     **「整条扩张，然后胶囊扩张的要超过整条」**
    *
    *     · `tabPress` → 桌面那条 **tab 条**整体放大一点（1 → 1.04）
-   *     · `capsulePress` → **选中胶囊**放大得更多（纵向 1 → 1.16），
-   *       且**慢半拍**（`delay`）—— 观感是"条先鼓起、胶囊再顶出来"，
-   *       顶出来的那一截正好越过 tab 条的上下边（见 `TAB_CAPSULE_LIFT`）
+   *     · `capsulePress` → **选中气泡**放大得更多（纵向 1 → 1.30），
+   *       且**慢半拍**（`delay`）—— 观感是"条先鼓起、气泡再顶出来"，
+   *       顶出来的那一截正好越过 tab 条的上下边（静止态是内缩的，见 `BUBBLE_INSET`）
    *
    *   ★ 弹簧**故意用不同参数**：条那条快而硬（跟手），胶囊那条慢而弹
    *     （"液体"那点黏滞感）。两个都关掉 native driver 会踩坑，
    *     所以：条用 native（纯 transform），胶囊留着 JS driver ——
    *     同一个视图上不能混，这里正好是两个视图。
    *
-   *   真·液态玻璃（iOS 26）那侧，**整条**的系统原生扩张照旧由
-   *   `UIGlassEffect.isInteractive` 负责；胶囊这一层是我们自己补的，
-   *   两者叠起来才是"条 + 胶囊"两层都动。
+   *   ★ 2026-10-23 起**不再用** iOS 26 的 `UIGlassEffect.isInteractive`：
+   *     它会把 RN 的触摸流 cancel 掉，拖动切 Tab 直接失效（见下面
+   *     `interactiveTabGlass` 撤掉的说明）。所以这两层 JS 弹簧就是**唯一**的
+   *     按压反馈，别再当成"叠在系统动画上的补充"。
    */
   const tabPress = useRef(new Animated.Value(0)).current;
   /** 胶囊那一层（慢半拍、幅度更大） */
@@ -354,14 +375,20 @@ function AppShell(): React.JSX.Element {
   /** 整条：鼓一点就够（再大就成"整体缩放"了，不像玻璃） */
   const tabScale = tabPress.interpolate({
     inputRange: [0, 1],
-    // 外层胶囊保持稳定，按压只放大对应的内胶囊。
-    outputRange: [1, 1],
+    // ★ 没有原生交互玻璃之后，"按压扩张"全靠这一层 + 下面的气泡：
+    //   条先鼓一点、气泡再越过条（见 `capsuleScaleY`）。
+    outputRange: [1, 1.04],
   });
 
-  /** 胶囊：按压时**明显越过** tab 条上下边（ 用户报"按压 expand 的 feeling 缺失"） */
+  /**
+   * 气泡：按压时**明显越过** tab 条上下边。
+   *
+   * ★ 静止态是内缩 4pt 的，所以纵向要给到 1.30 才真的涨出去
+   *   （参考图里按下那一刻气泡是压在整条边上的）。
+   */
   const capsuleScaleY = capsulePress.interpolate({
     inputRange: [0, 1],
-    outputRange: [1, 1.22],
+    outputRange: [1, 1.3],
   });
   /** 横向也扩一点，"扩张"不该只有纵向 */
   const capsuleScaleX = capsulePress.interpolate({
@@ -408,6 +435,18 @@ function AppShell(): React.JSX.Element {
   );
   const capsuleL = useRef(new Animated.Value(0)).current;
   /**
+   * 气泡**宽度**（JS driver，跟 `capsuleL` 一样）。
+   * 平时是一格的宽度；按在两格中间时要弹成两格宽，所以不能写成静态样式。
+   */
+  const capsuleW = useRef(new Animated.Value(0)).current;
+  /** 第一次布局时直接给值，不要从 0 弹出来 */
+  const capsuleInited = useRef(false);
+  /** 按下时气泡要跨哪两格（null = 只盖一格） */
+  const [pressSpan, setPressSpan] = useState<{
+    from: number;
+    to: number;
+  } | null>(null);
+  /**
    * 胶囊的**宽度** —— 单独一条值才做得动"流淌"那一下：
    * 切换时先把宽度抻长（补齐两格之间的距离），位置挪过去再收回来。
    * ★ 只给宽度一条值不够，左右两条边要能**分别**动，见 `settleCapsule`。
@@ -426,18 +465,53 @@ function AppShell(): React.JSX.Element {
     });
   }, []);
 
-  // 按下未选中的 Tab 时，选中胶囊先跟到被按的那一格；松开后再由 tab 状态确认切换。
+  // 按下时气泡先跟到被按的那一格（跨格时是那两格）；松开后由 tab 状态确认切换。
   useEffect(() => {
     if (pressedTab == null) return;
-    const rect = tabRects[tabIndexOf(pressedTab)];
-    if (!rect) return;
+    const from = pressSpan ? pressSpan.from : tabIndexOf(pressedTab);
+    const to = pressSpan ? pressSpan.to : from;
+    const a = tabRects[from];
+    const b = tabRects[to];
+    if (!a || !b) return;
     Animated.spring(capsuleL, {
-      toValue: rect.x,
+      toValue: a.x,
       useNativeDriver: false,
       friction: 10,
       tension: 95,
     }).start();
-  }, [pressedTab, tabRects, tabIndexOf, capsuleL]);
+    Animated.spring(capsuleW, {
+      toValue: b.x + b.width - a.x + BUBBLE_X * 2,
+      useNativeDriver: false,
+      friction: 10,
+      tension: 95,
+    }).start();
+  }, [pressedTab, pressSpan, tabRects, tabIndexOf, capsuleL, capsuleW]);
+
+  /**
+   * 按下某一格时决定气泡要不要跨格。
+   *
+   * ★ 落点离左右边界 `SPAN_ZONE` 以内 → 跨到那一侧。
+   *   遥控器没有"按在哪儿"这回事（`locationX` 不可靠），直接不跨。
+   */
+  const handleTabPressIn = useCallback(
+    (index: number, e: GestureResponderEvent) => {
+      const rect = tabRects[index];
+      let span: { from: number; to: number } | null = null;
+      if (rect && !isRemoteMode()) {
+        const x = e.nativeEvent.locationX;
+        if (Number.isFinite(x)) {
+          if (index > 0 && x < SPAN_ZONE) {
+            span = { from: index - 1, to: index };
+          } else if (index < TABS.length - 1 && rect.width - x < SPAN_ZONE) {
+            span = { from: index, to: index + 1 };
+          }
+        }
+      }
+      setPressSpan(span);
+      setTabHeld(true, TABS[index].id);
+    },
+    [tabRects, setTabHeld],
+  );
 
   // 布局完成后再读取 native tag；只依赖 tab 会漏掉首次布局这一次更新。
   useEffect(() => {
@@ -473,8 +547,11 @@ function AppShell(): React.JSX.Element {
       const rect = tabRects[index];
       if (!rect) return;
       capsuleTarget.current = rect.x;
-      if (!animated) {
+      const w = rect.width + BUBBLE_X * 2;
+      if (!animated || !capsuleInited.current) {
+        capsuleInited.current = true;
         capsuleL.setValue(rect.x);
+        capsuleW.setValue(w);
         return;
       }
       // ★ 纯平移（不要拉长）—— 用户报"先抻长、滑过去再收的是错的"
@@ -484,8 +561,15 @@ function AppShell(): React.JSX.Element {
         friction: 9,
         tension: 80,
       }).start();
+      // 跨格按下的那一下要收回来，宽度也得跟着弹
+      Animated.spring(capsuleW, {
+        toValue: w,
+        useNativeDriver: false,
+        friction: 9,
+        tension: 80,
+      }).start();
     },
-    [tabRects, capsuleL],
+    [tabRects, capsuleL, capsuleW],
   );
 
   /** 把页面和胶囊一起摆到 `indexFloat` 这个连续位置上（拖拽跟手） */
@@ -497,8 +581,11 @@ function AppShell(): React.JSX.Element {
       pageX.setValue(-clamped * width);
       // 拖拽时胶囊保持刚体（宽度不动）："流淌"只留给落位
       capsuleL.setValue(first + clamped * stride);
+      // ★ 如果是从"跨格按下"接上的拖拽，宽度要收回单格
+      const base = tabRects[Math.round(clamped)] ?? tabRects[0];
+      if (base) capsuleW.setValue(base.width + BUBBLE_X * 2);
     },
-    [tabRects, pageX, capsuleL, width],
+    [tabRects, pageX, capsuleL, capsuleW, width],
   );
 
   // 点 Tab 切过去时，胶囊跟着滑
@@ -690,13 +777,13 @@ function AppShell(): React.JSX.Element {
   /**
    * 选中气泡 —— 跟着手指走的那一颗"玻璃珠"。
    *
-   * ★★ 它**比 Tab 格大一圈**（见 `BUBBLE_X` / `BUBBLE_Y`）：横向各探出一截，
-   *   纵向直接越过整条 Tab 栏的上下边 —— 参考图（iOS 26 原生 Tab 栏）里
-   *   那颗珠子就是这个样子。所以宽度要按"格宽 + 两倍探出"算，
-   *   再靠 `left: -BUBBLE_X` 把多出来的那一半让回左边。
+   * ★★ 两个状态（见 `BUBBLE_X` / `BUBBLE_INSET` 的注释）：
+   *   · 静止：收在整条里面、淡灰；
+   *   · 按下：`capsuleScaleX/Y` 放大 + `tabBubbleLit` 亮起来。
    *
+   *   横向比 Tab 格各宽 `BUBBLE_X`，所以宽度按"格宽 + 两倍探出"算，
+   *   再靠 `left: -BUBBLE_X` 把多出来的那一半让回左边。
    *   位置（`capsuleL`）仍然对齐 `tabRects[i].x` —— 拖拽、落位的数学一行都不用改。
-   *   按住时由 `capsuleScaleX/Y` 继续放大，就是参考图第二张的展开态。
    */
   const capsule =
     tabRects.length === TABS.length ? (
@@ -705,7 +792,7 @@ function AppShell(): React.JSX.Element {
         style={[
           styles.tabBubble,
           {
-            width: (tabRects[tabIndexOf(tab)]?.width ?? 0) + BUBBLE_X * 2,
+            width: capsuleW,
             transform: [
               { translateX: capsuleL },
               { scaleX: capsuleScaleX },
@@ -715,55 +802,46 @@ function AppShell(): React.JSX.Element {
         ]}
       >
         <View style={styles.tabBubbleInner} />
+        {/* 按下才亮：opacity 跟着 `capsulePress` 走，跟放大同一条弹簧 */}
+        <Animated.View
+          style={[styles.tabBubbleLit, { opacity: capsulePress }]}
+        />
       </Animated.View>
     ) : null;
 
   /** 三个 Tab 按钮。两端渲染的是同一份 —— 免得改了一边忘了另一边 */
-  const tabButtons = TABS.map((item, index) => {
-    const button = (
-      <TabButton
-        ref={node => {
-          tabRefs.current[index] = node;
-        }}
-        name={item.id}
-        label={item.label}
-        active={tab === item.id}
-        pressed={pressedTab === item.id}
-        passive={interactiveTabGlass}
-        // ★ TV 上初始/返回时焦点落在当前 Tab 上，而不是被右上角「设置」抢走。
-        preferredFocus={tabFocusPending && tab === item.id}
-        onFocus={() => setTabFocusPending(false)}
-        // ★ 显式左右焦点：只在这三个 Tab 之间走，不会被「设置」抢
-        // ★ 边界回指自己：最左边继续按左、最右边继续按右时不交给 Android
-        // 空间搜索，否则它可能跳到设置按钮或页面里的其他可聚焦控件。
-        nextFocusLeft={tabTags[index - 1] ?? tabTags[index]}
-        nextFocusRight={tabTags[index + 1] ?? tabTags[index]}
-        onPress={() => goToTab(item.id)}
-        onPressIn={() => setTabHeld(true, item.id)}
-        onPressOut={() => setTabHeld(false, item.id)}
-        onLayout={e => handleTabLayout(index, e)}
-      />
-    );
-
-    if (!interactiveTabGlass) return React.cloneElement(button, { key: item.id });
-
-    return (
-      <GlassBox
-        key={item.id}
-        style={styles.tabItemGlass}
-        cornerRadius={radius.pill}
-        interactive
-        onTouchStart={() => setTabHeld(true, item.id)}
-        onTouchEnd={() => {
-          setTabHeld(false, item.id);
-          goToTab(item.id);
-        }}
-        onTouchCancel={() => setTabHeld(false, item.id)}
-      >
-        {button}
-      </GlassBox>
-    );
-  });
+  const tabButtons = TABS.map((item, index) => (
+    <TabButton
+      key={item.id}
+      ref={node => {
+        tabRefs.current[index] = node;
+      }}
+      name={item.id}
+      label={item.label}
+      active={tab === item.id}
+      pressed={
+        pressedTab === item.id ||
+        (pressSpan != null && index >= pressSpan.from && index <= pressSpan.to)
+      }
+      // ★ TV 上初始/返回时焦点落在当前 Tab 上，而不是被右上角「设置」抢走。
+      preferredFocus={tabFocusPending && tab === item.id}
+      onFocus={() => setTabFocusPending(false)}
+      // ★ 显式左右焦点：只在这三个 Tab 之间走，不会被「设置」抢
+      // ★ 边界回指自己：最左边继续按左、最右边继续按右时不交给 Android
+      // 空间搜索，否则它可能跳到设置按钮或页面里的其他可聚焦控件。
+      nextFocusLeft={tabTags[index - 1] ?? tabTags[index]}
+      nextFocusRight={tabTags[index + 1] ?? tabTags[index]}
+      onPress={() => goToTab(item.id)}
+      onPressIn={e => handleTabPressIn(index, e)}
+      onPressOut={() => {
+        setPressSpan(null);
+        setTabHeld(false, item.id);
+        // 没换 Tab（比如按的是当前格）也要把跨格撑开的气泡收回去
+        settleCapsule(tabIndexOf(tab));
+      }}
+      onLayout={e => handleTabLayout(index, e)}
+    />
+  ));
 
   if (route.name === 'settings') {
     return (
@@ -855,9 +933,7 @@ function AppShell(): React.JSX.Element {
                   不能让整个外壳退成透明。这个半透明底是参考图里的完整外层胶囊，
                   也给 Android 提供稳定的视觉兜底。
                 */}
-                {!interactiveTabGlass ? (
-                  <View pointerEvents="none" style={styles.tabBarSurface} />
-                ) : null}
+                <View pointerEvents="none" style={styles.tabBarSurface} />
                 {capsule}
                 {tabButtons}
               </GlassBox>
@@ -886,21 +962,10 @@ const TabButton = React.forwardRef<
     /** TV：左右方向键的显式目标（native tag） */
     nextFocusLeft?: number;
     nextFocusRight?: number;
-  /**
-   * ★ **纯展示**：只负责画，完全不接收触摸。
-   *
-   *   iOS 26 的真玻璃必须"手指打在玻璃自己身上"才有系统的按压反馈，
-   *   所以这一层要让开：触摸穿透到下面的玻璃，
-   *   由外面那层 `Pressable` 从落点反推按的是哪一项（见 `pressTabAt`）。
-   *
-   *   ★ 用 `pointerEvents="none"` 而不是让它可点但不管事 ——
-   *     前者在 iOS 上直接把 `userInteractionEnabled` 置 false，
-   *     触摸才**真的**会落到玻璃上。
-   */
-    passive?: boolean;
     onPress: () => void;
-    /** 按住 / 松开 —— 给外面那层胶囊做按压回弹用（真玻璃下用不到） */
-    onPressIn?: () => void;
+    /** 按住 —— 外层要拿落点判断气泡要不要跨格（见 `handleTabPressIn`） */
+    onPressIn?: (e: GestureResponderEvent) => void;
+    /** 松开 —— 给外面那层气泡做回弹 */
     onPressOut?: () => void;
     onLayout: (e: LayoutChangeEvent) => void;
   }
@@ -910,7 +975,6 @@ const TabButton = React.forwardRef<
     label,
     active,
     pressed = false,
-    passive,
     preferredFocus,
     onFocus,
     nextFocusLeft,
@@ -943,14 +1007,6 @@ const TabButton = React.forwardRef<
       </Text>
     </>
   );
-
-  if (passive) {
-    return (
-      <View style={styles.tab} pointerEvents="none" onLayout={onLayout}>
-        {content}
-      </View>
-    );
-  }
 
   return (
     <Pressable
@@ -1047,10 +1103,6 @@ const makeStyles = (
         ? color.bar
         : color.barSolid,
     },
-    tabItemGlass: {
-      borderRadius: radius.pill,
-      overflow: 'visible',
-    },
     tabBarSurface: {
       position: 'absolute',
       top: 0,
@@ -1072,14 +1124,29 @@ const makeStyles = (
     tabBubble: {
       position: 'absolute',
       left: -BUBBLE_X,
-      top: -BUBBLE_Y,
-      bottom: -BUBBLE_Y,
+      // ★ 静止态是**内缩**的（不是探出去）—— 用户给的静止状态图里，
+      //   气泡明显收在整条上下边里面。
+      top: BUBBLE_INSET,
+      bottom: BUBBLE_INSET,
     },
+    /** 静止态：一层很淡的灰（亮）/ 白釉（深），不描边、不投影 */
     tabBubbleInner: {
       flex: 1,
       borderRadius: radius.pill,
-      // 比整条更亮的一层"珠子"：参考图里选中项底下那颗就是这个观感
       backgroundColor: color.tabBubble,
+    },
+    /**
+     * 按下态：叠在静止层上的那颗"玻璃珠"。
+     * `opacity` 由 `capsulePress` 驱动（0 → 1），和放大是同一条弹簧。
+     */
+    tabBubbleLit: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      borderRadius: radius.pill,
+      backgroundColor: color.tabBubbleLit,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: color.tabBubbleBorder,
       // ★ 阴影只给 iOS：Android 的 `elevation` 会**抬高绘制层级**，
@@ -1087,8 +1154,8 @@ const makeStyles = (
       ...(Platform.OS === 'ios'
         ? {
             shadowColor: '#000000',
-            shadowOpacity: 0.18,
-            shadowRadius: 12,
+            shadowOpacity: 0.20,
+            shadowRadius: 14,
             shadowOffset: { width: 0, height: 4 },
           }
         : null),

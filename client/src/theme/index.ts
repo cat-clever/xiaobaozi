@@ -53,9 +53,11 @@ export interface Palette {
    */
   tabActive: string;
 
-  /** 选中气泡（跟着手指走的那颗）的填充 */
+  /** 选中气泡**静止态**的填充：亮色是很淡的灰、深色是很淡的白釉 */
   tabBubble: string;
-  /** 选中气泡的描边 —— 玻璃的"边缘高光"就靠它 */
+  /** 选中气泡**按下态**的填充：亮起来的那颗"玻璃珠" */
+  tabBubbleLit: string;
+  /** 按下态气泡的描边 —— 玻璃的"边缘高光"就靠它 */
   tabBubbleBorder: string;
 
   /**
@@ -103,9 +105,10 @@ export const DARK: Palette = {
   glassBorder: 'rgba(255,255,255,0.22)',
   glassHighlight: 'rgba(255,255,255,0.42)',
   tabActive: '#0A84FF',
-  // 深色底上白釉不能太浓，否则气泡会变成一块灰板
-  tabBubble: 'rgba(255,255,255,0.20)',
-  tabBubbleBorder: 'rgba(255,255,255,0.40)',
+  // 静止态只比整条亮一点点；按下才明显亮起来
+  tabBubble: 'rgba(255,255,255,0.10)',
+  tabBubbleLit: 'rgba(255,255,255,0.22)',
+  tabBubbleBorder: 'rgba(255,255,255,0.34)',
   // 深色：iOS 0.50（有真模糊） / Android 0.66（没模糊，留多点底）
   bar: Platform.OS === 'ios' ? 'rgba(16,16,22,0.50)' : 'rgba(16,16,22,0.66)',
   barSolid: 'rgba(16,16,22,0.88)',
@@ -139,8 +142,10 @@ export const LIGHT: Palette = {
   glassBorder: 'rgba(255,255,255,0.80)',
   glassHighlight: 'rgba(255,255,255,0.95)',
   tabActive: '#007AFF',
-  // 亮色底上气泡要比整条**更白**才浮得出来（参考图里那颗珠子就是这个观感）
-  tabBubble: 'rgba(255,255,255,0.90)',
+  // ★ 静止态是**比整条深一点**的灰（用户状态图里选中项底下就是一块淡灰），
+  //   按下才换成亮白 + 投影 —— 两态反过来才像系统那颗玻璃珠。
+  tabBubble: 'rgba(0,0,0,0.055)',
+  tabBubbleLit: 'rgba(255,255,255,0.96)',
   tabBubbleBorder: 'rgba(255,255,255,0.98)',
   // 亮色：白字底反过来 —— iOS 0.60（有真模糊） / Android 0.75（没模糊）
   bar: Platform.OS === 'ios' ? 'rgba(255,255,255,0.60)' : 'rgba(255,255,255,0.75)',
