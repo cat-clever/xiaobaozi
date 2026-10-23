@@ -625,7 +625,9 @@ function AppShell(): React.JSX.Element {
   const capsule =
     tabRects.length === TABS.length ? (
       <Animated.View
-        pointerEvents="none"
+        // 真玻璃的交互反馈只交给选中胶囊，不能让整条 Tab 栏一起参与命中。
+        // 非真玻璃分支仍然穿透，避免挡住下面的按钮。
+        pointerEvents={realGlass ? 'auto' : 'none'}
         style={[
           styles.tabIndicator,
           {
@@ -648,6 +650,7 @@ function AppShell(): React.JSX.Element {
             effect="regular"
             colorScheme={glassScheme}
             tintColor={color.glassCapsule}
+            interactive
           />
         ) : (
           <View style={styles.tabIndicatorInner} />
@@ -788,7 +791,6 @@ function AppShell(): React.JSX.Element {
                     冒泡到这个 `Pressable`，用 `locationX` 反推按的是哪一项。 */}
                 <LiquidGlassView
                   style={styles.tabBar}
-                  interactive
                   effect="regular"
                   colorScheme={glassScheme}
                 >
