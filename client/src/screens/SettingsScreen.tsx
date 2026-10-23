@@ -183,7 +183,7 @@ export function SettingsScreen({ onBack }: Props): React.JSX.Element {
           </View>
           <Switch
             value={glass}
-            pointerEvents="none"
+            onValueChange={setGlass}
             focusable={false}
             trackColor={{ false: color.surfaceStrong, true: color.accent }}
             thumbColor="#FFFFFF"

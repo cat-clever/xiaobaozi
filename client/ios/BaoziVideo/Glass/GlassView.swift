@@ -93,6 +93,14 @@ final class GlassView: UIView {
     }
   }
 
+  /// iOS 26 官方的多玻璃元素容器；内部 GlassView 会被系统合并 / 分离。
+  @objc var container: Bool = false {
+    didSet {
+      guard container != oldValue else { return }
+      reloadGlass()
+    }
+  }
+
   private var fallbackTimer: Timer?
 
   override init(frame: CGRect) {
@@ -100,7 +108,7 @@ final class GlassView: UIView {
     backgroundColor = .clear
     clipsToBounds = true
 
-    // 玻璃层垫在最底下；RN 的内容在 GlassBox 那层垫在它上面（兄弟节点）
+    // 玻璃效果承载 RN 内容；React 子视图会在 insertReactSubview 中放进 contentView。
     addSubview(effectView)
 
     highlightLayer.locations = [0.0, 0.12, 1.0]
@@ -153,6 +161,16 @@ final class GlassView: UIView {
       //   而真玻璃只有那条路能装 —— 这里显式要一次布局，把机会补回来。
       setNeedsLayout()
     }
+  }
+
+  // Apple 的 Liquid Glass 自定义内容应放在 UIVisualEffectView.contentView 内，
+  // 让文字和控件参与材质的 vibrant / 对比度处理。
+  override func insertReactSubview(_ subview: UIView!, at index: Int) {
+    effectView.contentView.insertSubview(subview, at: index)
+  }
+
+  override func removeReactSubview(_ subview: UIView!) {
+    subview.removeFromSuperview()
   }
 
   deinit {
@@ -228,9 +246,15 @@ final class GlassView: UIView {
     // 运行期那层判断在 `glassEffectAvailable` 里（测试版上会崩的那次）
     if #available(iOS 26.0, *) {
       effectView.effect = UIVisualEffect()
-      let glass = UIGlassEffect(style: .regular)
-      glass.isInteractive = interactive
-      effectView.effect = glass
+      if container {
+        let group = UIGlassContainerEffect()
+        group.spacing = 12
+        effectView.effect = group
+      } else {
+        let glass = UIGlassEffect(style: .regular)
+        glass.isInteractive = interactive
+        effectView.effect = glass
+      }
     }
   }
 

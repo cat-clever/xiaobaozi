@@ -33,6 +33,7 @@ import {
 
 import {
   GlassBox,
+  LIQUID_GLASS_AVAILABLE,
   NATIVE_GLASS_AVAILABLE,
 } from './src/components/GlassBox';
 import { isOnHorizontalRow } from './src/components/horizontalRow';
@@ -117,6 +118,8 @@ function AppShell(): React.JSX.Element {
    *   表现就是"一块不透明的板压在玻璃上"（用户报的原话）。
    */
   const nativeGlass = glassOn && NATIVE_GLASS_AVAILABLE;
+  const interactiveTabGlass =
+    glassOn && Platform.OS === 'ios' && (LIQUID_GLASS_AVAILABLE as boolean);
   const styles = useMemo(
     () => makeStyles(color, glassOn, nativeGlass, insets.bottom),
     [color, glassOn, nativeGlass, insets.bottom],
@@ -209,9 +212,11 @@ function AppShell(): React.JSX.Element {
   const tabPress = useRef(new Animated.Value(0)).current;
   /** 胶囊那一层（慢半拍、幅度更大） */
   const capsulePress = useRef(new Animated.Value(0)).current;
+  const [pressedTab, setPressedTab] = useState<Tab | null>(null);
 
   const setTabHeld = useCallback(
-    (held: boolean) => {
+    (held: boolean, id?: Tab) => {
+      setPressedTab(held ? id ?? null : null);
       Animated.spring(tabPress, {
         toValue: held ? 1 : 0,
         useNativeDriver: true,
@@ -234,7 +239,8 @@ function AppShell(): React.JSX.Element {
   /** 整条：鼓一点就够（再大就成"整体缩放"了，不像玻璃） */
   const tabScale = tabPress.interpolate({
     inputRange: [0, 1],
-    outputRange: [1, 1.04],
+    // 外层胶囊保持稳定，按压只放大对应的内胶囊。
+    outputRange: [1, 1],
   });
 
   /** 胶囊：按压时**明显越过** tab 条上下边（ 用户报"按压 expand 的 feeling 缺失"） */
@@ -304,6 +310,19 @@ function AppShell(): React.JSX.Element {
       return next;
     });
   }, []);
+
+  // 按下未选中的 Tab 时，选中胶囊先跟到被按的那一格；松开后再由 tab 状态确认切换。
+  useEffect(() => {
+    if (pressedTab == null) return;
+    const rect = tabRects[tabIndexOf(pressedTab)];
+    if (!rect) return;
+    Animated.spring(capsuleL, {
+      toValue: rect.x,
+      useNativeDriver: false,
+      friction: 10,
+      tension: 95,
+    }).start();
+  }, [pressedTab, tabRects, tabIndexOf, capsuleL]);
 
   // 布局完成后再读取 native tag；只依赖 tab 会漏掉首次布局这一次更新。
   useEffect(() => {
@@ -581,30 +600,50 @@ function AppShell(): React.JSX.Element {
     ) : null;
 
   /** 三个 Tab 按钮。两端渲染的是同一份 —— 免得改了一边忘了另一边 */
-  const tabButtons = TABS.map((item, index) => (
-    <TabButton
-      key={item.id}
-      ref={node => {
-        tabRefs.current[index] = node;
-      }}
-      label={item.label}
-      active={tab === item.id}
-      passive={false}
-      // ★ TV 上初始/返回时焦点落在当前 Tab 上，而不是被右上角「设置」抢走。
-      //   只请求一次（见 tabFocusPending 的说明）—— 一直挂着会把焦点抢回去。
-      preferredFocus={tabFocusPending && tab === item.id}
-      onFocus={() => setTabFocusPending(false)}
-      // ★ 显式左右焦点：只在这三个 Tab 之间走，不会被「设置」抢
-      // ★ 边界回指自己：最左边继续按左、最右边继续按右时不交给 Android
-      // 空间搜索，否则它可能跳到设置按钮或页面里的其他可聚焦控件。
-      nextFocusLeft={tabTags[index - 1] ?? tabTags[index]}
-      nextFocusRight={tabTags[index + 1] ?? tabTags[index]}
-      onPress={() => goToTab(item.id)}
-      onPressIn={() => setTabHeld(true)}
-      onPressOut={() => setTabHeld(false)}
-      onLayout={e => handleTabLayout(index, e)}
-    />
-  ));
+  const tabButtons = TABS.map((item, index) => {
+    const button = (
+      <TabButton
+        ref={node => {
+          tabRefs.current[index] = node;
+        }}
+        label={item.label}
+        active={tab === item.id}
+        pressed={pressedTab === item.id}
+        passive={interactiveTabGlass}
+        // ★ TV 上初始/返回时焦点落在当前 Tab 上，而不是被右上角「设置」抢走。
+        preferredFocus={tabFocusPending && tab === item.id}
+        onFocus={() => setTabFocusPending(false)}
+        // ★ 显式左右焦点：只在这三个 Tab 之间走，不会被「设置」抢
+        // ★ 边界回指自己：最左边继续按左、最右边继续按右时不交给 Android
+        // 空间搜索，否则它可能跳到设置按钮或页面里的其他可聚焦控件。
+        nextFocusLeft={tabTags[index - 1] ?? tabTags[index]}
+        nextFocusRight={tabTags[index + 1] ?? tabTags[index]}
+        onPress={() => goToTab(item.id)}
+        onPressIn={() => setTabHeld(true, item.id)}
+        onPressOut={() => setTabHeld(false, item.id)}
+        onLayout={e => handleTabLayout(index, e)}
+      />
+    );
+
+    if (!interactiveTabGlass) return React.cloneElement(button, { key: item.id });
+
+    return (
+      <GlassBox
+        key={item.id}
+        style={styles.tabItemGlass}
+        cornerRadius={radius.pill}
+        interactive
+        onTouchStart={() => setTabHeld(true, item.id)}
+        onTouchEnd={() => {
+          setTabHeld(false, item.id);
+          goToTab(item.id);
+        }}
+        onTouchCancel={() => setTabHeld(false, item.id)}
+      >
+        {button}
+      </GlassBox>
+    );
+  });
 
   if (route.name === 'settings') {
     return (
@@ -688,9 +727,18 @@ function AppShell(): React.JSX.Element {
               <GlassBox
                 style={styles.tabBar}
                 cornerRadius={radius.pill}
+                container={interactiveTabGlass}
                 // 视觉材质统一复用设置页的 GlassView；按压回弹由 Tab 自身动画控制。
                 interactive={false}
               >
+                {/*
+                  GlassView 是绝对定位的材质层；当系统没有把材质成功合成出来时，
+                  不能让整个外壳退成透明。这个半透明底是参考图里的完整外层胶囊，
+                  也给 Android 提供稳定的视觉兜底。
+                */}
+                {!interactiveTabGlass ? (
+                  <View pointerEvents="none" style={styles.tabBarSurface} />
+                ) : null}
                 {capsule}
                 {tabButtons}
               </GlassBox>
@@ -709,6 +757,7 @@ const TabButton = React.forwardRef<
   {
     label: string;
     active: boolean;
+    pressed?: boolean;
     /** TV：挂载时是否请求焦点（当前 Tab 为 true） */
     preferredFocus?: boolean;
     /** TV：拿到焦点后通知外层撤掉「首选焦点」 */
@@ -738,6 +787,7 @@ const TabButton = React.forwardRef<
   {
     label,
     active,
+    pressed = false,
     passive,
     preferredFocus,
     onFocus,
@@ -755,7 +805,13 @@ const TabButton = React.forwardRef<
 
   const content = (
     <>
-      <Text style={[styles.tabText, active && styles.tabTextActive]}>
+      <Text
+        style={[
+          styles.tabText,
+          active && styles.tabTextActive,
+          pressed && styles.tabTextPressed,
+        ]}
+      >
         {label}
       </Text>
       <View style={[styles.tabDot, active && styles.tabDotActive]} />
@@ -865,6 +921,21 @@ const makeStyles = (
         ? color.bar
         : color.barSolid,
     },
+    tabItemGlass: {
+      borderRadius: radius.pill,
+      overflow: 'visible',
+    },
+    tabBarSurface: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      borderRadius: radius.pill,
+      backgroundColor: color.glass,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: color.glassBorder,
+    },
     tabIndicator: {
       position: 'absolute',
       left: 0,
@@ -874,7 +945,8 @@ const makeStyles = (
     tabIndicatorInner: {
       flex: 1,
       borderRadius: radius.pill,
-      backgroundColor: color.surfaceStrong,
+      // 内胶囊使用独立的玻璃釉色，接近系统 Tab 按压时的亮起效果。
+      backgroundColor: color.glassCapsule,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: color.glassBorder,
     },
@@ -885,6 +957,7 @@ const makeStyles = (
     },
     tabText: { color: color.textDim, fontSize: 15 },
     tabTextActive: { color: color.text, fontWeight: '700' },
+    tabTextPressed: { color: color.accent, fontWeight: '700' },
     tabDot: {
       width: 4,
       height: 4,

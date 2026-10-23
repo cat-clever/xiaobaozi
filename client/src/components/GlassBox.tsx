@@ -17,16 +17,22 @@ interface Props {
    * ★ 只有 iOS 26+ 有真玻璃（`UIGlassEffect`），低版本这参数是**空操作** ——
    *   玻璃照旧静态，命中行为也跟从前完全一样。所以调用方可以放心传。
    * ★ 开了之后玻璃会**重新参与命中测试**（不参与就收不到触摸，也就不会动）。
-   *   children 仍旧是玻璃的**兄弟节点、垫在玻璃上面** ——
-   *   ★ 千万别把 children 塞进玻璃里，见下面 `pressable` 的注释。
+   *   children 会由原生 GlassView 放入 `UIVisualEffectView.contentView`，
+   *   让系统统一处理内容的 vibrant 和对比度。
    */
   interactive?: boolean;
+  /** iOS 26：使用 UIGlassContainerEffect 组合内部玻璃元素 */
+  container?: boolean;
+  onTouchStart?: ViewProps['onTouchStart'];
+  onTouchEnd?: ViewProps['onTouchEnd'];
+  onTouchCancel?: ViewProps['onTouchCancel'];
 }
 
 type NativeGlassProps = ViewProps & {
   cornerRadius?: number;
   glassStyle?: string;
   interactive?: boolean;
+  container?: boolean;
 };
 
 const FILL: ViewStyle = { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 };
@@ -105,6 +111,10 @@ export function GlassBox({
   cornerRadius,
   enabled,
   interactive,
+  container,
+  onTouchStart,
+  onTouchEnd,
+  onTouchCancel,
 }: Props): React.JSX.Element {
   const { color, glass } = useTheme();
   const corner = cornerRadius ?? radiusScale.lg;
@@ -118,23 +128,34 @@ export function GlassBox({
    *   "带自定义内容 + 可交互" 的玻璃卡片例子是这么摆的：
    *
    *       CardView
-   *       ├─ effectView(玻璃, isInteractive = true)   ← 铺在**下面**
-   *       └─ contentView(普通视图)                     ← 内容铺在**上面**
+   *       └─ UIVisualEffectView.contentView   ← 自定义内容放在这里
    *
-   *   ★ 曾经想岔过：以为"触摸必须打进玻璃里"，于是把 children 交给原生、
-   *     由原生塞进 `effectView.contentView`。结果 **iOS 26 上整条 Tab 栏直接
-   *     看不见**（真机实测）。官方样例根本不是那种结构 —— 别再往玻璃里塞内容。
+   *   静态玻璃使用 `box-none`，让 contentView 里的按钮继续接收触摸；
+   *   交互玻璃使用 `auto`，由玻璃本身接收触摸并触发系统反馈。
    *
-   *   ★ 但玻璃要能被命中才会动，所以开了交互就**不能再挂 `pointerEvents="none"`**
-   *     （RN 那边 `none` 就是把 `userInteractionEnabled` 置 false，
-   *     整棵子树都退出命中测试，玻璃永远收不到触摸）。
-   *     内容垫在玻璃上面、命中优先级更高，所以按钮点击完全不受影响；
-   *     只有落在胶囊空白处的触摸才会打到玻璃。
-   *
-   *   低版本系统没有真玻璃，`interactive` 是空操作 —— 仍旧走 `pointerEvents="none"`，
+   *   低版本系统没有真玻璃，`interactive` 是空操作 —— 仍旧走静态兜底，
    *   行为与从前完全一致。
    */
   const pressable = Boolean(interactive) && on && LIQUID_GLASS_AVAILABLE;
+
+  if (on && NativeGlass && Platform.OS === 'ios') {
+    return (
+      <NativeGlass
+        style={style}
+        cornerRadius={corner}
+        glassStyle={glassStyle}
+        // 传 undefined 而不是 false：Android / 低版本不该多出这个属性
+        interactive={pressable || undefined}
+        container={container || undefined}
+        pointerEvents={pressable ? 'auto' : 'box-none'}
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+        onTouchCancel={onTouchCancel}
+      >
+        {children}
+      </NativeGlass>
+    );
+  }
 
   return (
     <View style={style}>
@@ -143,9 +164,11 @@ export function GlassBox({
           style={FILL}
           cornerRadius={corner}
           glassStyle={glassStyle}
-          // 传 undefined 而不是 false：Android / 低版本不该多出这个属性
           interactive={pressable || undefined}
           pointerEvents={pressable ? 'auto' : 'none'}
+          onTouchStart={onTouchStart}
+          onTouchEnd={onTouchEnd}
+          onTouchCancel={onTouchCancel}
         />
       ) : (
         <View
