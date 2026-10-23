@@ -46,15 +46,17 @@ export interface Palette {
   /** 玻璃上缘的高光（"折射"感就靠它） */
   glassHighlight: string;
   /**
-   * 选中胶囊那层玻璃的**着色**（iOS 26 用，传给 `LiquidGlassView` 的 `tintColor`）。
+   * 底部 Tab **选中态**的着色（图标 + 文字）。
    *
-   * ★ 为什么必须单独给一个色：胶囊跟整条是**同一份材质**，不着色叠在一起
-   *   根本看不出哪一格被选中（用户 2026-10-16 报「内部的胶囊看不到了」）。
-   *   给它一层白釉，胶囊就明确地"亮"出来 —— 参考图里那颗胶囊就是这个观感。
-   *
-   * ★ 亮色主题给的 alpha 更高：浅底上白釉要更浓才压得住。
+   * ★ 用系统蓝，不用主题橙：参考图（iOS 26 原生 Tab 栏）里选中项就是蓝的，
+   *   而且底部栏跟页内主色分开之后，切换页面时不会跟橙色的来源角标抢注意力。
    */
-  glassCapsule: string;
+  tabActive: string;
+
+  /** 选中气泡（跟着手指走的那颗）的填充 */
+  tabBubble: string;
+  /** 选中气泡的描边 —— 玻璃的"边缘高光"就靠它 */
+  tabBubbleBorder: string;
 
   /**
    * 底部 Tab 栏**垫在玻璃层后面**的透光底（玻璃开启时用）。
@@ -100,7 +102,10 @@ export const DARK: Palette = {
   glass: 'rgba(255,255,255,0.10)',
   glassBorder: 'rgba(255,255,255,0.22)',
   glassHighlight: 'rgba(255,255,255,0.42)',
-  glassCapsule: 'rgba(255,255,255,0.26)',
+  tabActive: '#0A84FF',
+  // 深色底上白釉不能太浓，否则气泡会变成一块灰板
+  tabBubble: 'rgba(255,255,255,0.20)',
+  tabBubbleBorder: 'rgba(255,255,255,0.40)',
   // 深色：iOS 0.50（有真模糊） / Android 0.66（没模糊，留多点底）
   bar: Platform.OS === 'ios' ? 'rgba(16,16,22,0.50)' : 'rgba(16,16,22,0.66)',
   barSolid: 'rgba(16,16,22,0.88)',
@@ -133,7 +138,10 @@ export const LIGHT: Palette = {
   glass: 'rgba(255,255,255,0.52)',
   glassBorder: 'rgba(255,255,255,0.80)',
   glassHighlight: 'rgba(255,255,255,0.95)',
-  glassCapsule: 'rgba(255,255,255,0.72)',
+  tabActive: '#007AFF',
+  // 亮色底上气泡要比整条**更白**才浮得出来（参考图里那颗珠子就是这个观感）
+  tabBubble: 'rgba(255,255,255,0.90)',
+  tabBubbleBorder: 'rgba(255,255,255,0.98)',
   // 亮色：白字底反过来 —— iOS 0.60（有真模糊） / Android 0.75（没模糊）
   bar: Platform.OS === 'ios' ? 'rgba(255,255,255,0.60)' : 'rgba(255,255,255,0.75)',
   barSolid: 'rgba(255,255,255,0.90)',
@@ -152,7 +160,7 @@ export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 } as const;
  *   Home Indicator 那一条（根 `SafeAreaView` 已经不吃底部了，见 `App.tsx`）。
  *   列表底部一律用下面的 `useTabBarSpace()`，它会自动把安全区加进来。
  */
-export const TAB_BAR_SPACE = 92;
+export const TAB_BAR_SPACE = 102;
 
 /**
  * 列表底部该留多高 = Tab 栏占的高度 + 底部安全区。

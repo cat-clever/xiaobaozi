@@ -58,6 +58,121 @@ const TABS: Array<{ id: Tab; label: string }> = [
 /** 悬浮 Tab 栏离底边的距离 —— 不贴底，抬上来一点 */
 const TAB_BAR_BOTTOM = space.xl;
 
+/** Tab 图标的画布边长 —— 图标本身按 22pt 左右画，留一点呼吸 */
+const ICON = 26;
+/**
+ * 选中气泡比 Tab 格**多探出去**多少。
+ *
+ * ★ 参考图里那颗"玻璃珠"不是贴着格子的：横向各多一截、纵向**越过整条
+ *   Tab 栏的上下边**（`tabBar` 的 `overflow: 'visible'` 就是为它留的）。
+ *   按住时再靠 `capsuleScale` 继续放大，就是第二张参考图那个观感。
+ */
+const BUBBLE_X = 8;
+const BUBBLE_Y = 5;
+
+/**
+ * 底部 Tab 图标 —— **纯 View 拼的**，不引 `react-native-svg`。
+ *
+ * ★ 为什么不引图标库：`react-native-svg` 是原生依赖，装了就得重跑 pod / gradle，
+ *   而本机没有构建链（只能推 CI 验），为了三个图标把构建风险拉高不划算。
+ *   三个图标都是简单几何：边框三角当屋顶、2×2 圆角方块、圆环 + 斜手柄，
+ *   用 View + 圆角 + 旋转就够了，颜色直接由主题传进来。
+ */
+const iconStyles = StyleSheet.create({
+  frame: { width: ICON, height: ICON, alignItems: 'center', justifyContent: 'center' },
+  /**
+   * 首页：屋顶用**边框三角**（宽 0 + 左右透明边框 + 下边框着色）。
+   *
+   * ★ 一开始用的是"45° 圆角方块"，26px 下会糊成一团圆顶 —— 试过预览才看出来。
+   *   三角在同样尺寸下轮廓清楚得多，左右还自带一圈"屋檐"。
+   */
+  roof: {
+    position: 'absolute',
+    left: 2,
+    top: 3.5,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 11,
+    borderRightWidth: 11,
+    borderBottomWidth: 9,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+  },
+  houseBody: {
+    position: 'absolute',
+    left: 5,
+    top: 12.5,
+    width: 16,
+    height: 10,
+    borderBottomLeftRadius: 3,
+    borderBottomRightRadius: 3,
+  },
+  // 分类：2×2 圆角方块
+  gridStack: { gap: 3 },
+  gridRow: { flexDirection: 'row', gap: 3 },
+  gridCell: { width: 9, height: 9, borderRadius: 2.5 },
+  // 搜索：圆环 + 45° 手柄（-45° 才是从左上往右下，正好接在圆环外缘）
+  lens: {
+    position: 'absolute',
+    left: 2.5,
+    top: 2.5,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 2.2,
+  },
+  handle: {
+    position: 'absolute',
+    left: 18.1,
+    top: 14.8,
+    width: 2.4,
+    height: 9,
+    borderRadius: 1.2,
+    transform: [{ rotate: '-45deg' }],
+  },
+});
+
+const TabIcon = React.memo(function TabIcon({
+  name,
+  color,
+}: {
+  name: Tab;
+  color: string;
+}): React.JSX.Element {
+  if (name === 'home') {
+    return (
+      <View style={iconStyles.frame}>
+        <View style={[iconStyles.roof, { borderBottomColor: color }]} />
+        <View style={[iconStyles.houseBody, { backgroundColor: color }]} />
+      </View>
+    );
+  }
+
+  if (name === 'category') {
+    return (
+      <View style={iconStyles.frame}>
+        <View style={iconStyles.gridStack}>
+          <View style={iconStyles.gridRow}>
+            <View style={[iconStyles.gridCell, { backgroundColor: color }]} />
+            <View style={[iconStyles.gridCell, { backgroundColor: color }]} />
+          </View>
+          <View style={iconStyles.gridRow}>
+            <View style={[iconStyles.gridCell, { backgroundColor: color }]} />
+            <View style={[iconStyles.gridCell, { backgroundColor: color }]} />
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={iconStyles.frame}>
+      <View style={[iconStyles.lens, { borderColor: color }]} />
+      <View style={[iconStyles.handle, { backgroundColor: color }]} />
+    </View>
+  );
+});
+
 
 type Route = { name: 'tabs' } | { name: 'settings' };
 
@@ -573,20 +688,24 @@ function AppShell(): React.JSX.Element {
   ) : null;
 
   /**
-   * 选中胶囊 —— 跟着手指走的那一颗。
+   * 选中气泡 —— 跟着手指走的那一颗"玻璃珠"。
    *
-   * 胶囊使用选中态填充，外层材质统一由 GlassBox 提供。
-   * 按压时由 JS 动画控制胶囊和整条 Tab 的回弹，避免整条 native glass
-   * interactive 带来的整体放大。
+   * ★★ 它**比 Tab 格大一圈**（见 `BUBBLE_X` / `BUBBLE_Y`）：横向各探出一截，
+   *   纵向直接越过整条 Tab 栏的上下边 —— 参考图（iOS 26 原生 Tab 栏）里
+   *   那颗珠子就是这个样子。所以宽度要按"格宽 + 两倍探出"算，
+   *   再靠 `left: -BUBBLE_X` 把多出来的那一半让回左边。
+   *
+   *   位置（`capsuleL`）仍然对齐 `tabRects[i].x` —— 拖拽、落位的数学一行都不用改。
+   *   按住时由 `capsuleScaleX/Y` 继续放大，就是参考图第二张的展开态。
    */
   const capsule =
     tabRects.length === TABS.length ? (
       <Animated.View
         pointerEvents="none"
         style={[
-          styles.tabIndicator,
+          styles.tabBubble,
           {
-            width: tabRects[tabIndexOf(tab)]?.width ?? 0,
+            width: (tabRects[tabIndexOf(tab)]?.width ?? 0) + BUBBLE_X * 2,
             transform: [
               { translateX: capsuleL },
               { scaleX: capsuleScaleX },
@@ -595,7 +714,7 @@ function AppShell(): React.JSX.Element {
           },
         ]}
       >
-        <View style={styles.tabIndicatorInner} />
+        <View style={styles.tabBubbleInner} />
       </Animated.View>
     ) : null;
 
@@ -606,6 +725,7 @@ function AppShell(): React.JSX.Element {
         ref={node => {
           tabRefs.current[index] = node;
         }}
+        name={item.id}
         label={item.label}
         active={tab === item.id}
         pressed={pressedTab === item.id}
@@ -754,6 +874,8 @@ function AppShell(): React.JSX.Element {
 const TabButton = React.forwardRef<
   React.ElementRef<typeof Pressable>,
   {
+    /** 图标用哪个 —— 跟 Tab id 一一对应 */
+    name: Tab;
     label: string;
     active: boolean;
     pressed?: boolean;
@@ -784,6 +906,7 @@ const TabButton = React.forwardRef<
   }
 >(function TabButton(
   {
+    name,
     label,
     active,
     pressed = false,
@@ -802,18 +925,22 @@ const TabButton = React.forwardRef<
   const { color } = useTheme();
   const styles = useMemo(() => makeStyles(color), [color]);
 
+  /**
+   * 选中 / 按住 → 系统蓝；其余 → 暗一档的文字色。
+   * ★ 图标和文字**同一个颜色**，参考图里选中项就是整组一起变蓝的。
+   */
+  const lit = active || pressed;
+  const tint = lit ? color.tabActive : color.textDim;
+
   const content = (
     <>
+      <TabIcon name={name} color={tint} />
       <Text
-        style={[
-          styles.tabText,
-          active && styles.tabTextActive,
-          pressed && styles.tabTextPressed,
-        ]}
+        numberOfLines={1}
+        style={[styles.tabText, { color: tint }, lit && styles.tabTextLit]}
       >
         {label}
       </Text>
-      <View style={[styles.tabDot, active && styles.tabDotActive]} />
     </>
   );
 
@@ -935,36 +1062,46 @@ const makeStyles = (
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: color.glassBorder,
     },
-    tabIndicator: {
+    /**
+     * 选中气泡的外框。
+     *
+     * ★ `left: -BUBBLE_X` + 内联宽度（格宽 + 2×BUBBLE_X）= 气泡左右各探出一截；
+     *   `top/bottom: -BUBBLE_Y` = **越过整条 Tab 栏的上下边**。
+     *   能画到外面去靠的是 `tabBar` 上的 `overflow: 'visible'`。
+     */
+    tabBubble: {
       position: 'absolute',
-      left: 0,
-      top: space.xs,
-      bottom: space.xs,
+      left: -BUBBLE_X,
+      top: -BUBBLE_Y,
+      bottom: -BUBBLE_Y,
     },
-    tabIndicatorInner: {
+    tabBubbleInner: {
       flex: 1,
       borderRadius: radius.pill,
-      // 内胶囊使用独立的玻璃釉色，接近系统 Tab 按压时的亮起效果。
-      backgroundColor: color.glassCapsule,
+      // 比整条更亮的一层"珠子"：参考图里选中项底下那颗就是这个观感
+      backgroundColor: color.tabBubble,
       borderWidth: StyleSheet.hairlineWidth,
-      borderColor: color.glassBorder,
+      borderColor: color.tabBubbleBorder,
+      // ★ 阴影只给 iOS：Android 的 `elevation` 会**抬高绘制层级**，
+      //   绝对定位的气泡一旦带上 elevation 就会盖到图标/文字上面去。
+      ...(Platform.OS === 'ios'
+        ? {
+            shadowColor: '#000000',
+            shadowOpacity: 0.18,
+            shadowRadius: 12,
+            shadowOffset: { width: 0, height: 4 },
+          }
+        : null),
     },
     tab: {
       alignItems: 'center',
-      paddingHorizontal: space.xl,
-      paddingVertical: space.md,
+      paddingHorizontal: 28,
+      // 图标 + 文字比原来一行字高，纵向留白收一点，整条不至于太厚
+      paddingTop: 7,
+      paddingBottom: space.sm,
     },
-    tabText: { color: color.textDim, fontSize: 15 },
-    tabTextActive: { color: color.text, fontWeight: '700' },
-    tabTextPressed: { color: color.accent, fontWeight: '700' },
-    tabDot: {
-      width: 4,
-      height: 4,
-      borderRadius: 2,
-      marginTop: 3,
-      backgroundColor: 'transparent',
-    },
-    tabDotActive: { backgroundColor: color.accent },
+    tabText: { marginTop: 3, fontSize: 12, lineHeight: 14, fontWeight: '500' },
+    tabTextLit: { fontWeight: '700' },
   });
 
 export default App;
