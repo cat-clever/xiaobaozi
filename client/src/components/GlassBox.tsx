@@ -17,12 +17,9 @@ interface Props {
    * ★ 只有 iOS 26+ 有真玻璃（`UIGlassEffect`），低版本这参数是**空操作** ——
    *   玻璃照旧静态，命中行为也跟从前完全一样。所以调用方可以放心传。
    * ★ 开了之后玻璃会**重新参与命中测试**（不参与就收不到触摸，也就不会动）。
-   *   children 会由原生 GlassView 放入 `UIVisualEffectView.contentView`，
-   *   让系统统一处理内容的 vibrant 和对比度。
+   *   children 由 GlassBox 作为 React 兄弟层放在玻璃上方，保证 RN 交互稳定。
    */
   interactive?: boolean;
-  /** iOS 26：使用 UIGlassContainerEffect 组合内部玻璃元素 */
-  container?: boolean;
   onTouchStart?: ViewProps['onTouchStart'];
   onTouchEnd?: ViewProps['onTouchEnd'];
   onTouchCancel?: ViewProps['onTouchCancel'];
@@ -32,7 +29,6 @@ type NativeGlassProps = ViewProps & {
   cornerRadius?: number;
   glassStyle?: string;
   interactive?: boolean;
-  container?: boolean;
 };
 
 const FILL: ViewStyle = { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 };
@@ -111,7 +107,6 @@ export function GlassBox({
   cornerRadius,
   enabled,
   interactive,
-  container,
   onTouchStart,
   onTouchEnd,
   onTouchCancel,
@@ -128,34 +123,16 @@ export function GlassBox({
    *   "带自定义内容 + 可交互" 的玻璃卡片例子是这么摆的：
    *
    *       CardView
-   *       └─ UIVisualEffectView.contentView   ← 自定义内容放在这里
+   *       ├─ effectView(玻璃)
+   *       └─ contentView(React 内容)
    *
-   *   静态玻璃使用 `box-none`，让 contentView 里的按钮继续接收触摸；
-   *   交互玻璃使用 `auto`，由玻璃本身接收触摸并触发系统反馈。
+   *   当前 RN 原生桥接下，React 内容作为 GlassView 的兄弟层放置，
+   *   由 GlassBox 保持稳定的命中和布局行为。
    *
    *   低版本系统没有真玻璃，`interactive` 是空操作 —— 仍旧走静态兜底，
    *   行为与从前完全一致。
    */
   const pressable = Boolean(interactive) && on && LIQUID_GLASS_AVAILABLE;
-
-  if (on && NativeGlass && Platform.OS === 'ios') {
-    return (
-      <NativeGlass
-        style={style}
-        cornerRadius={corner}
-        glassStyle={glassStyle}
-        // 传 undefined 而不是 false：Android / 低版本不该多出这个属性
-        interactive={pressable || undefined}
-        container={container || undefined}
-        pointerEvents={pressable ? 'auto' : 'box-none'}
-        onTouchStart={onTouchStart}
-        onTouchEnd={onTouchEnd}
-        onTouchCancel={onTouchCancel}
-      >
-        {children}
-      </NativeGlass>
-    );
-  }
 
   return (
     <View style={style}>

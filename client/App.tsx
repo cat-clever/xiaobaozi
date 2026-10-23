@@ -727,7 +727,6 @@ function AppShell(): React.JSX.Element {
               <GlassBox
                 style={styles.tabBar}
                 cornerRadius={radius.pill}
-                container={interactiveTabGlass}
                 // 视觉材质统一复用设置页的 GlassView；按压回弹由 Tab 自身动画控制。
                 interactive={false}
               >
