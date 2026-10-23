@@ -1062,7 +1062,15 @@ function AppShell(): React.JSX.Element {
                   不能让整个外壳退成透明。这个半透明底是参考图里的完整外层胶囊，
                   也给 Android 提供稳定的视觉兜底。
                 */}
-                <View pointerEvents="none" style={styles.tabBarSurface} />
+                {/*
+                  ★★ 有**真·液态玻璃**时**不要**垫这层白底（2026-10-23 修）：
+                     `tabBarSurface` 是玻璃的**兄弟节点、画在玻璃上面**的，
+                     0.52 的白会直接把模糊/折射盖掉 —— 用户报"模糊背景也没有"。
+                     它只在没有真材质时（玻璃关掉 / iOS 25 及以下 / Android）兜底。
+                */}
+                {nativeGlass && LIQUID_GLASS_AVAILABLE ? null : (
+                  <View pointerEvents="none" style={styles.tabBarSurface} />
+                )}
                 {capsule}
                 {tabButtons}
               </GlassBox>
