@@ -928,6 +928,9 @@ function AppShell(): React.JSX.Element {
         // 空间搜索，否则它可能跳到设置按钮或页面里的其他可聚焦控件。
         nextFocusLeft={tabTags[index - 1] ?? tabTags[index]}
         nextFocusRight={tabTags[index + 1] ?? tabTags[index]}
+        // Tab 上继续上下移动时留在当前 Tab，避免 Android 空间搜索跳出 Tab 栏。
+        nextFocusUp={tabTags[index]}
+        nextFocusDown={tabTags[index]}
         onPress={() => goToTab(item.id)}
         onPressIn={e => handleTabPressIn(index, e)}
         // ★ 只清状态：气泡落位交给上面那个 effect，别在这里再抢一次
@@ -1099,6 +1102,9 @@ const TabButton = React.forwardRef<
     /** TV：左右方向键的显式目标（native tag） */
     nextFocusLeft?: number;
     nextFocusRight?: number;
+    /** TV：上下方向键的显式目标（native tag） */
+    nextFocusUp?: number;
+    nextFocusDown?: number;
     /**
      * ★ **纯展示**：只负责画，完全不接收触摸（iOS 26 的交互玻璃那一支用）。
      *
@@ -1124,6 +1130,8 @@ const TabButton = React.forwardRef<
     onFocus,
     nextFocusLeft,
     nextFocusRight,
+    nextFocusUp,
+    nextFocusDown,
     onPress,
     onPressIn,
     onPressOut,
@@ -1168,6 +1176,8 @@ const TabButton = React.forwardRef<
       onFocus={onFocus}
       nextFocusLeft={nextFocusLeft}
       nextFocusRight={nextFocusRight}
+      nextFocusUp={nextFocusUp}
+      nextFocusDown={nextFocusDown}
       onPress={onPress}
       onPressIn={onPressIn}
       onPressOut={onPressOut}
