@@ -43,6 +43,12 @@ class MainActivity : ReactActivity() {
       //   Android 在 key down 时直接处理的，不经过 onPress）。
       //   所以在这里对**同一个键**再做一次时间窗去重（用户 2026-10-21 反馈
       //   "点一下跳了好几个"）。
+      //
+      // ★★ 窗口从 150ms 收到 60ms（2026-10-29）。150ms 太宽了：一次物理
+      //   按键拆出来的重复事件间隔只有几毫秒，而**人连按两下方向键**经常
+      //   就在 100ms 出头 —— 第二下会被当成重复事件**吃掉**。表现是
+      //   "在 Tab 栏按左右没反应 / 走一格就停"（用户报的"Tab 无法遥控"）。
+      //   60ms 仍然挡得住拆分按键，又允许每秒十几下的正常连按。
       val now = SystemClock.uptimeMillis()
       if (event.keyCode == lastRemoteKeyCode &&
         now - lastRemoteKeyAt < REMOTE_KEY_DEBOUNCE_MS
@@ -56,7 +62,13 @@ class MainActivity : ReactActivity() {
   }
 
   private companion object {
-    const val REMOTE_KEY_DEBOUNCE_MS = 150L
+    /**
+     * 同键去重窗口。
+     *
+     * ★ 60ms：拆分按键的重复事件只隔几毫秒，够挡住；而人连按方向键
+     *   通常 100ms 以上，不会被误吃（150ms 会 —— 见 dispatchKeyEvent 里的说明）。
+     */
+    const val REMOTE_KEY_DEBOUNCE_MS = 60L
   }
 
   override fun dispatchTouchEvent(ev: MotionEvent): Boolean {

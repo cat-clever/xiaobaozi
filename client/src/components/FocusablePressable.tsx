@@ -22,9 +22,13 @@ import { isRemoteMode, useRemoteMode } from '../tv/inputMode';
  *
  * 即使原生层已经过滤了 repeatCount > 0 的按键事件（见 MainActivity.kt），
  * 有些盒子的遥控器/蓝牙遥控器仍然可能在极短间隔内发出多次独立的 ACTION_DOWN
- * （repeatCount 均为 0）。300ms 足以挡住这类抖动，又不会让正常操作感觉迟钝。
+ * （repeatCount 均为 0）。
+ *
+ * ★ 2026-10-29 从 150ms 收到 100ms：一次物理按键拆出来的重复事件只隔几毫秒，
+ *   100ms 足够挡住；而 150ms 会**误吃**用户自己连按的第二下（"按了没反应"）。
+ *   原生那层的同键去重同步收到 60ms（焦点移动不经过 onPress，只有原生管得到）。
  */
-const TV_PRESS_DEBOUNCE_MS = 150;
+const TV_PRESS_DEBOUNCE_MS = 100;
 
 export const Pressable = React.forwardRef<
   React.ElementRef<typeof RNPressable>,

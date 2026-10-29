@@ -301,6 +301,68 @@ function AppShell(): React.JSX.Element {
   const tabRefs = useRef<Array<React.ElementRef<typeof Pressable> | null>>([]);
   const [tabTags, setTabTags] = useState<number[]>([]);
   /**
+   * ★★ 上一批算出来的 tag —— 算出来没变就不 `setState`。
+   *
+   *   否则 ref 回调 → rAF → setState → 重渲染 → ref 回调 会转成死循环。
+   */
+  const tabTagsRef = useRef<number[]>([]);
+  /**
+   * ★★ 重新取三个 Tab 的 native tag（显式焦点全靠它）。
+   *
+   *   ★ 2026-10-29 修「遥控器管不住 Tab」。原来取 tag 的是挂在
+   *     `[tabRects, tab]` 上的一个 effect，而且**一个取不到就整批 `return`**：
+   *       · 进「设置」再返回时 Tab 栏是**卸载重建**的 —— 三个 Pressable 变成
+   *         新的原生视图、新的 tag；但 `tab` / `tabRects` 一个都没变，
+   *         effect 不重跑，`tabTags` 于是**一直指着已经销毁的 tag**；
+   *       · Android 拿到失效 id 时 `findViewById` 找不到就退回**空间搜索**，
+   *         而 Fabric 的 tag 是会被回收复用的 —— 运气不好直接命中别的控件。
+   *     表现就是"左右键管不住 Tab / 一按焦点就跑到别处去"。
+   *
+   *   ★ 现在改成**跟着 ref 回调走**：哪个 Tab 的原生视图换了就重算一次，
+   *     挂载、重挂载、首帧都覆盖到。`requestAnimationFrame` 是因为 ref 回调
+   *     发生在 commit 里，等这一帧画完再取，原生视图才真的挂到父节点上。
+   *
+   *   ★ 这里**不加"已排队"的闸门**：那个标志一旦因为 App 切到后台、
+   *     rAF 被丢掉而没复位，tag 就再也算不出来了 —— 一次多排两帧无所谓。
+   */
+  const resolveTabTags = useCallback(() => {
+    requestAnimationFrame(() => {
+      const tags: number[] = [];
+      for (let i = 0; i < TABS.length; i += 1) {
+        const node = tabRefs.current[i];
+        const tag = node ? findNodeHandle(node) : null;
+        // 还没挂上 —— 这次先不算，等下一次 ref 回调再来（不放弃整批）
+        if (tag == null) return;
+        tags.push(tag);
+      }
+      const prev = tabTagsRef.current;
+      if (prev.length === tags.length && prev.every((t, i) => t === tags[i])) {
+        return;
+      }
+      tabTagsRef.current = tags;
+      setTabTags(tags);
+    });
+  }, []);
+  /**
+   * Tab 的 ref：**身份要稳定**。
+   *
+   * ★ 内联的 `ref={node => ...}` 每次渲染都是新函数，React 会把旧的
+   *   先解绑（`null`）再绑新的 —— 等于每次重渲染都触发一遍重算。
+   *   用 `useMemo` 固定下来之后，只有真的挂载 / 卸载才会回调。
+   */
+  const tabRefSetters = useMemo(
+    () =>
+      TABS.map(
+        (_item, index) =>
+          (node: React.ElementRef<typeof Pressable> | null) => {
+            if (tabRefs.current[index] === node) return;
+            tabRefs.current[index] = node;
+            resolveTabTags();
+          },
+      ),
+    [resolveTabTags],
+  );
+  /**
    * ★ TV 首选焦点只请求一次。
    *
    *   `hasTVPreferredFocus` 在 Android 上会被 RN 翻译成 requestFocus()。
@@ -309,11 +371,64 @@ function AppShell(): React.JSX.Element {
    *   「向 Tab 调整就快速跳到其他」）。所以第一次拿到焦点后立刻撤掉。
    */
   const [tabFocusPending, setTabFocusPending] = useState(true);
-  // 从设置页回到 Tab 时把首选焦点重新挂上 —— 否则焦点无处可去。
-  // 播放页收起/展开不经过 route，不会在这里重复抢焦点（小窗自己会请求）。
+  /**
+   * ★★ 进 Tab 层 / 从设置页返回时，把「首选焦点」**延后**再挂上（可重试）。
+   *
+   *   `hasTVPreferredFocus` 走的是 `@ReactProp` → `view.requestFocus()`，
+   *   而 props 是在 `createView` 之后**立刻**应用的 —— 那时视图还没挂到
+   *   父节点上，`requestFocus()` 直接返回 false，而且**不会重试**：
+   *   prop 值没变，Fabric 就不会再送一次。结果焦点留在「设置」按钮上，
+   *   用户按左右键怎么都进不了 Tab 栏（2026-10-29 报的"Tab 无法遥控"）。
+   *
+   *   做法：先把 pending 撤成 false，隔一帧再置 true —— prop 值变了，
+   *   原生就会**重新** `requestFocus()`，这一次视图已经在树上了。
+   *   ★ 只在**还没拿到焦点**时重试（`tabFocusPendingRef`）：`onFocus` 一旦
+   *     把 pending 撤掉，后面的重试全部跳过 —— 不会把用户挪走的焦点抢回来
+   *     （反复抢就是 2026-10-22「向 Tab 调整就快速跳到其他」那个老毛病）。
+   */
+  const tabFocusPendingRef = useRef(true);
+  /** 同步写 ref + state：定时器里要读「最新」的 pending，读闭包里的旧值会误判 */
+  const setTabFocusPendingNow = useCallback((value: boolean) => {
+    tabFocusPendingRef.current = value;
+    setTabFocusPending(value);
+  }, []);
   useEffect(() => {
-    if (route.name === 'tabs') setTabFocusPending(true);
-  }, [route.name]);
+    if (route.name !== 'tabs') return;
+    let cancelled = false;
+    const timers: Array<ReturnType<typeof setTimeout>> = [];
+
+    /**
+     * 一次「撤销 → 重挂」。
+     *
+     * ★ 是否重挂由**外层**那一下决定（那时还没撤），内层必须**无条件**
+     *   把 true 挂回去 —— 否则它看到自己刚写的 false，会误判成"已经拿到
+     *   焦点"，`hasTVPreferredFocus` 就永远挂不回去了。
+     * ★ 400ms 那次是给**老盒子**留的：首帧布局比 50ms 还慢的时候，
+     *   第一次 requestFocus 照样落在"视图还没上树"上。
+     */
+    const requestFocusOnce = (delay: number) => {
+      timers.push(
+        setTimeout(() => {
+          if (cancelled || !tabFocusPendingRef.current) return;
+          setTabFocusPendingNow(false);
+          timers.push(
+            setTimeout(() => {
+              if (cancelled) return;
+              setTabFocusPendingNow(true);
+            }, 32),
+          );
+        }, delay),
+      );
+    };
+
+    requestFocusOnce(50);
+    requestFocusOnce(400);
+
+    return () => {
+      cancelled = true;
+      timers.forEach(clearTimeout);
+    };
+  }, [route.name, setTabFocusPendingNow]);
   const [session, setSession] = useState<PlaySession | null>(null);
   /** 播放器是不是收成了角落里的悬浮小窗 */
   const [mini, setMini] = useState(false);
@@ -544,20 +659,16 @@ function AppShell(): React.JSX.Element {
     [tabRects, setTabHeld],
   );
 
-  // 布局完成后再读取 native tag；只依赖 tab 会漏掉首次布局这一次更新。
+  /**
+   * ★★ 从「设置」回到 Tab 层时补一次 tag 重算（2026-10-29）。
+   *
+   *   Tab 栏卸载重建时 ref 回调本来就会来一遍，这里是**兜底**：
+   *   万一那一遍 ref 回调撞上原生视图还没 attach（`findNodeHandle` 拿到
+   *   null），tag 就永远停在旧值上 —— 而遥控器恰恰就是在这条路径上失灵的。
+   */
   useEffect(() => {
-    const tags: number[] = [];
-    for (const ref of tabRefs.current) {
-      const tag = ref ? findNodeHandle(ref) : null;
-      if (tag == null) return;
-      tags.push(tag);
-    }
-    setTabTags(prev =>
-      prev.length === tags.length && prev.every((t, i) => t === tags[i])
-        ? prev
-        : tags,
-    );
-  }, [tabRects, tab]);
+    if (route.name === 'tabs') resolveTabTags();
+  }, [route.name, resolveTabTags]);
 
   /**
    * 把胶囊挪到某个下标的位置。
@@ -908,9 +1019,7 @@ function AppShell(): React.JSX.Element {
     const button = (
       <TabButton
         key={item.id}
-        ref={node => {
-          tabRefs.current[index] = node;
-        }}
+        ref={tabRefSetters[index]}
         name={item.id}
         label={item.label}
         active={tab === item.id}
@@ -922,14 +1031,24 @@ function AppShell(): React.JSX.Element {
         passive={interactiveTabGlass}
         // ★ TV 上初始/返回时焦点落在当前 Tab 上，而不是被右上角「设置」抢走。
         preferredFocus={tabFocusPending && tab === item.id}
-        onFocus={() => setTabFocusPending(false)}
+        onFocus={() => setTabFocusPendingNow(false)}
         // ★ 显式左右焦点：只在这三个 Tab 之间走，不会被「设置」抢
         // ★ 边界回指自己：最左边继续按左、最右边继续按右时不交给 Android
         // 空间搜索，否则它可能跳到设置按钮或页面里的其他可聚焦控件。
         nextFocusLeft={tabTags[index - 1] ?? tabTags[index]}
         nextFocusRight={tabTags[index + 1] ?? tabTags[index]}
-        // Tab 上继续上下移动时留在当前 Tab，避免 Android 空间搜索跳出 Tab 栏。
-        nextFocusUp={tabTags[index]}
+        /*
+          ★★ 上下：**往下留在本格，往上交还给空间搜索**（2026-10-29 修）。
+
+            上一版把两个都指回自己（commit「keep vertical focus within
+            tab bar」），本意是不让空间搜索把焦点从 Tab 栏里带走。但电视上
+            没有"点一下别处"这回事 —— 焦点一旦进到 Tab 栏，**按上永远回不去
+            内容区**，遥控器就只剩三个 Tab 可点，用户报的就是"Tab 无法遥控"。
+
+            · DOWN 仍然指回自己：Tab 栏下面本来就没有控件，交给空间搜索
+              只会乱挑（跳到右上角「设置」或者别的页里）；
+            · UP 放开：按上就回到内容区最近的一张卡片，这才是电视的操作习惯。
+        */
         nextFocusDown={tabTags[index]}
         onPress={() => goToTab(item.id)}
         onPressIn={e => handleTabPressIn(index, e)}
@@ -1102,8 +1221,12 @@ const TabButton = React.forwardRef<
     /** TV：左右方向键的显式目标（native tag） */
     nextFocusLeft?: number;
     nextFocusRight?: number;
-    /** TV：上下方向键的显式目标（native tag） */
-    nextFocusUp?: number;
+    /**
+     * TV：下方向键的显式目标（native tag）。
+     *
+     * ★ 只有 DOWN —— 上方向键**故意不挂**：电视上按上要能回到内容区，
+     *   挂成自己就等于把焦点锁死在 Tab 栏里（见 `tabButtons` 里的说明）。
+     */
     nextFocusDown?: number;
     /**
      * ★ **纯展示**：只负责画，完全不接收触摸（iOS 26 的交互玻璃那一支用）。
@@ -1130,7 +1253,6 @@ const TabButton = React.forwardRef<
     onFocus,
     nextFocusLeft,
     nextFocusRight,
-    nextFocusUp,
     nextFocusDown,
     onPress,
     onPressIn,
@@ -1176,7 +1298,6 @@ const TabButton = React.forwardRef<
       onFocus={onFocus}
       nextFocusLeft={nextFocusLeft}
       nextFocusRight={nextFocusRight}
-      nextFocusUp={nextFocusUp}
       nextFocusDown={nextFocusDown}
       onPress={onPress}
       onPressIn={onPressIn}
