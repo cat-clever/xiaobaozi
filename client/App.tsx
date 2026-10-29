@@ -369,22 +369,17 @@ function AppShell(): React.JSX.Element {
    *   只要这个 prop 一直是 true，每次重渲染都会把焦点**抢回**当前 Tab ——
    *   用户按方向键刚移到「分类」，一次重渲染就又跳回去（2026-10-22 反馈
    *   「向 Tab 调整就快速跳到其他」）。所以第一次拿到焦点后立刻撤掉。
+   *
+   *   ★★ 初值必须为 false（不能在 createView 阶段就传 true）：
+   *     Fabric 在 `createViewInstance` 时视图尚未挂到父节点（`parent == null`），
+   *     那时 `requestFocus()` 只会在孤立节点上置 `PFLAG_FOCUSED` 并提前派发一次
+   *     假 `onFocus`，把 `tabFocusPendingRef` 提前清成 false，导致挂载后的重试全部短路。
    */
-  const [tabFocusPending, setTabFocusPending] = useState(true);
+  const [tabFocusPending, setTabFocusPending] = useState(false);
+  /** 当前是否有任意一个底部 Tab 持有焦点（供遥控器返回键判断） */
+  const tabFocusedRef = useRef(false);
   /**
    * ★★ 进 Tab 层 / 从设置页返回时，把「首选焦点」**延后**再挂上（可重试）。
-   *
-   *   `hasTVPreferredFocus` 走的是 `@ReactProp` → `view.requestFocus()`，
-   *   而 props 是在 `createView` 之后**立刻**应用的 —— 那时视图还没挂到
-   *   父节点上，`requestFocus()` 直接返回 false，而且**不会重试**：
-   *   prop 值没变，Fabric 就不会再送一次。结果焦点留在「设置」按钮上，
-   *   用户按左右键怎么都进不了 Tab 栏（2026-10-29 报的"Tab 无法遥控"）。
-   *
-   *   做法：先把 pending 撤成 false，隔一帧再置 true —— prop 值变了，
-   *   原生就会**重新** `requestFocus()`，这一次视图已经在树上了。
-   *   ★ 只在**还没拿到焦点**时重试（`tabFocusPendingRef`）：`onFocus` 一旦
-   *     把 pending 撤掉，后面的重试全部跳过 —— 不会把用户挪走的焦点抢回来
-   *     （反复抢就是 2026-10-22「向 Tab 调整就快速跳到其他」那个老毛病）。
    */
   const tabFocusPendingRef = useRef(true);
   /** 同步写 ref + state：定时器里要读「最新」的 pending，读闭包里的旧值会误判 */
@@ -396,39 +391,36 @@ function AppShell(): React.JSX.Element {
     if (route.name !== 'tabs') return;
     let cancelled = false;
     const timers: Array<ReturnType<typeof setTimeout>> = [];
+    // ★ 每次进 Tab 层（含从设置页返回）必须先把 pending 复位成 true，
+    //   否则启动后一旦触发过 onFocus，从设置页返回时 pending 仍是 false，
+    //   下面的重试会全部直接 return。
+    tabFocusPendingRef.current = true;
+    setTabFocusPending(false);
 
-    /**
-     * 一次「撤销 → 重挂」。
-     *
-     * ★ 是否重挂由**外层**那一下决定（那时还没撤），内层必须**无条件**
-     *   把 true 挂回去 —— 否则它看到自己刚写的 false，会误判成"已经拿到
-     *   焦点"，`hasTVPreferredFocus` 就永远挂不回去了。
-     * ★ 400ms 那次是给**老盒子**留的：首帧布局比 50ms 还慢的时候，
-     *   第一次 requestFocus 照样落在"视图还没上树"上。
-     */
     const requestFocusOnce = (delay: number) => {
       timers.push(
         setTimeout(() => {
           if (cancelled || !tabFocusPendingRef.current) return;
-          setTabFocusPendingNow(false);
+          setTabFocusPending(false);
           timers.push(
             setTimeout(() => {
-              if (cancelled) return;
-              setTabFocusPendingNow(true);
+              if (cancelled || !tabFocusPendingRef.current) return;
+              setTabFocusPending(true);
             }, 32),
           );
         }, delay),
       );
     };
 
-    requestFocusOnce(50);
+    requestFocusOnce(16);
+    requestFocusOnce(120);
     requestFocusOnce(400);
 
     return () => {
       cancelled = true;
       timers.forEach(clearTimeout);
     };
-  }, [route.name, setTabFocusPendingNow]);
+  }, [route.name]);
   const [session, setSession] = useState<PlaySession | null>(null);
   /** 播放器是不是收成了角落里的悬浮小窗 */
   const [mini, setMini] = useState(false);
@@ -936,8 +928,25 @@ function AppShell(): React.JSX.Element {
           setRoute({ name: 'tabs' });
           return true;
         }
+        // ★ TV 遥控器操作时：如果焦点在内容区（不在底部 Tab 栏上），
+        //   按一次返回键先把焦点拉回底部当前 Tab（方便在无限加载的分类页或长列表中间随时切 Tab）。
+        if (isRemoteMode() && !tabFocusedRef.current) {
+          tabFocusPendingRef.current = true;
+          setTabFocusPending(false);
+          setTimeout(() => {
+            if (tabFocusPendingRef.current) setTabFocusPending(true);
+          }, 16);
+          return true;
+        }
         if (tab !== 'home') {
           goToTab('home');
+          if (isRemoteMode()) {
+            tabFocusPendingRef.current = true;
+            setTabFocusPending(false);
+            setTimeout(() => {
+              if (tabFocusPendingRef.current) setTabFocusPending(true);
+            }, 16);
+          }
           return true;
         }
         return false;
@@ -1029,9 +1038,20 @@ function AppShell(): React.JSX.Element {
         }
         // ★ 交互玻璃那一支是纯展示，触摸交给玻璃（见 `passive` 的注释）
         passive={interactiveTabGlass}
+        // ★ 给原生层（MainActivity）标记当前选中的 Tab：
+        //   全屏播放时撤掉 tab-active，防止焦点穿透到播放器底下的 Tab 栏。
+        testID={
+          tab === item.id && !fullscreenPlaying ? 'tab-active' : `tab-${item.id}`
+        }
         // ★ TV 上初始/返回时焦点落在当前 Tab 上，而不是被右上角「设置」抢走。
         preferredFocus={tabFocusPending && tab === item.id}
-        onFocus={() => setTabFocusPendingNow(false)}
+        onFocus={() => {
+          tabFocusedRef.current = true;
+          setTabFocusPendingNow(false);
+        }}
+        onBlur={() => {
+          tabFocusedRef.current = false;
+        }}
         // ★ 显式左右焦点：只在这三个 Tab 之间走，不会被「设置」抢
         // ★ 边界回指自己：最左边继续按左、最右边继续按右时不交给 Android
         // 空间搜索，否则它可能跳到设置按钮或页面里的其他可聚焦控件。
@@ -1122,7 +1142,14 @@ function AppShell(): React.JSX.Element {
           （悬浮栏本来就该浮在内容之上）。所以 Tab 栏自己按安全区抬高
           （见 `tabBarWrap`），列表底部留白也要加上这一段（见 `useTabBarSpace`）。
       */}
-      <SafeAreaView style={styles.root} edges={['top']}>
+      <SafeAreaView
+        style={styles.root}
+        edges={['top']}
+        importantForAccessibility={
+          fullscreenPlaying ? 'no-hide-descendants' : 'auto'
+        }
+        pointerEvents={fullscreenPlaying ? 'none' : 'auto'}
+      >
         <View style={styles.header}>
           <View style={styles.headerMain}>
             <Text style={styles.brand}>小包子影视</Text>
@@ -1145,6 +1172,8 @@ function AppShell(): React.JSX.Element {
         {/*
           三页并排放在一条横排里，整条按 pageX 平移。
           都保持挂载 —— 切回来不丢滚动位置。
+          ★ 非当前页用 no-hide-descendants 配合原生 FOCUS_BLOCK_DESCENDANTS
+            屏蔽空间焦点搜索，避免遥控器方向键把焦点跳进屏幕外的隐藏页面。
         */}
         <View style={styles.body} {...pagerPan.panHandlers}>
           <Animated.View
@@ -1156,13 +1185,31 @@ function AppShell(): React.JSX.Element {
               },
             ]}
           >
-            <View style={{ width }}>
+            <View
+              style={{ width }}
+              importantForAccessibility={
+                tab === 'home' ? 'auto' : 'no-hide-descendants'
+              }
+              pointerEvents={tab === 'home' ? 'auto' : 'none'}
+            >
               {visited.home ? <HomeScreen onOpen={openSeries} /> : null}
             </View>
-            <View style={{ width }}>
+            <View
+              style={{ width }}
+              importantForAccessibility={
+                tab === 'category' ? 'auto' : 'no-hide-descendants'
+              }
+              pointerEvents={tab === 'category' ? 'auto' : 'none'}
+            >
               {visited.category ? <CategoryScreen onOpen={openSeries} /> : null}
             </View>
-            <View style={{ width }}>
+            <View
+              style={{ width }}
+              importantForAccessibility={
+                tab === 'search' ? 'auto' : 'no-hide-descendants'
+              }
+              pointerEvents={tab === 'search' ? 'auto' : 'none'}
+            >
               {visited.search ? <SearchScreen onOpen={openSeries} /> : null}
             </View>
           </Animated.View>
@@ -1214,10 +1261,14 @@ const TabButton = React.forwardRef<
     label: string;
     active: boolean;
     pressed?: boolean;
+    /** 原生层用于定位当前 Tab 的标识 */
+    testID?: string;
     /** TV：挂载时是否请求焦点（当前 Tab 为 true） */
     preferredFocus?: boolean;
     /** TV：拿到焦点后通知外层撤掉「首选焦点」 */
     onFocus?: () => void;
+    /** TV：失去焦点时通知外层更新焦点状态 */
+    onBlur?: () => void;
     /** TV：左右方向键的显式目标（native tag） */
     nextFocusLeft?: number;
     nextFocusRight?: number;
@@ -1249,8 +1300,10 @@ const TabButton = React.forwardRef<
     active,
     pressed = false,
     passive,
+    testID,
     preferredFocus,
     onFocus,
+    onBlur,
     nextFocusLeft,
     nextFocusRight,
     nextFocusDown,
@@ -1293,9 +1346,11 @@ const TabButton = React.forwardRef<
   return (
     <Pressable
       ref={ref}
+      testID={testID}
       style={styles.tab}
       hasTVPreferredFocus={preferredFocus}
       onFocus={onFocus}
+      onBlur={onBlur}
       nextFocusLeft={nextFocusLeft}
       nextFocusRight={nextFocusRight}
       nextFocusDown={nextFocusDown}

@@ -57,6 +57,27 @@ class MainActivity : ReactActivity() {
       }
       lastRemoteKeyCode = event.keyCode
       lastRemoteKeyAt = now
+
+      val decor = window.decorView
+      applyDpadFocus(decor)
+      val beforeFocus = decor.findFocus()
+      val handled = super.dispatchKeyEvent(event)
+      // ★★ 底部 Tab 栏是 position: absolute 浮在 ScrollView 上方的：
+      //   1. 列表滚到底部时，ScrollView 会先吞下键去滚 paddingBottom，或者卡片底边
+      //      （贴屏幕底）低于悬浮 Tab 栏底边（离底 24dp），导致 FocusFinder 判定
+      //      Tab 栏不在卡片正下方而拒绝转移焦点；
+      //   2. 当按「下键」后焦点仍停在原地（说明当前列表下方已无卡片可跳）时，
+      //      直接把焦点交给当前选中的底部 Tab。
+      if (event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN && !isTabView(beforeFocus)) {
+        val afterFocus = decor.findFocus()
+        if (afterFocus == null || afterFocus === beforeFocus) {
+          val activeTab = decor.findViewWithTag<View>("tab-active")
+          if (activeTab != null && activeTab.isShown && activeTab.isFocusableInTouchMode) {
+            if (activeTab.requestFocus()) return true
+          }
+        }
+      }
+      return handled
     }
     return super.dispatchKeyEvent(event)
   }
@@ -101,14 +122,28 @@ class MainActivity : ReactActivity() {
     val decor = window.decorView
     decor.viewTreeObserver.addOnGlobalLayoutListener {
       applyDpadFocus(decor)
-      if (decor.findFocus() == null) requestFirstFocus(decor)
+      if (decor.findFocus() == null) requestInitialFocus(decor)
     }
+  }
+
+  private fun isTabView(view: View?): Boolean {
+    val tag = view?.tag as? String ?: return false
+    return tag == "tab-active" || tag.startsWith("tab-")
   }
 
   private fun applyDpadFocus(view: View) {
     // ★ 跳过输入框：ReactEditText 故意把 focusableInTouchMode 置 false
     //   （触摸由 JS 管理，避免键盘乱弹）。补上去会破坏搜索框。
     if (view is android.widget.EditText) return
+    if (view is ViewGroup) {
+      if (view.importantForAccessibility == View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS) {
+        view.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+        return
+      }
+      if (view.descendantFocusability == ViewGroup.FOCUS_BLOCK_DESCENDANTS) {
+        view.descendantFocusability = ViewGroup.FOCUS_BEFORE_DESCENDANTS
+      }
+    }
     // ★ 只补**可点**的 View（Pressable / Switch）。ScrollView 之类只是
     //   focusable、不可点 —— 把它们也变成焦点目标的话，方向键会停在
     //   滚动容器上，看起来就是"条目选不对 / 焦点乱跳"。
@@ -118,6 +153,17 @@ class MainActivity : ReactActivity() {
     if (view is ViewGroup) {
       for (i in 0 until view.childCount) applyDpadFocus(view.getChildAt(i))
     }
+  }
+
+  private fun requestInitialFocus(decor: View) {
+    // ★ 优先聚焦底部当前选中的 Tab（"tab-active"）：
+    //   按树顺序遍历时右上角「设置」排在最前面，直接走 requestFirstFocus
+    //   会把初始焦点和从设置页返回后的焦点全都塞给「设置」按钮。
+    val activeTab = decor.findViewWithTag<View>("tab-active")
+    if (activeTab != null && activeTab.isShown && activeTab.isClickable && activeTab.isFocusableInTouchMode) {
+      if (activeTab.requestFocus()) return
+    }
+    requestFirstFocus(decor)
   }
 
   private fun requestFirstFocus(view: View): Boolean {

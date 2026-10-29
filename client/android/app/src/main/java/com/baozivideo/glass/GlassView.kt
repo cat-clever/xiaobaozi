@@ -321,9 +321,12 @@ class GlassView(context: Context) : View(context), GlassSurface {
     val dx = (loc[0] - rootLoc[0]).toFloat()
     val dy = (loc[1] - rootLoc[1]).toFloat()
 
-    val previous = host.visibility
+    // ★★ 用 alpha = 0f 临时隐身，绝不能用 visibility = View.INVISIBLE：
+    //   Android 的 View.setFlags 在视图变成 INVISIBLE 时，只要 hasFocus() 为 true
+    //   就会立刻调用 clearFocus()，把 Tab 栏里正在聚焦的按钮焦点强行清掉并跳回顶部。
+    val previous = host.alpha
     capturing = true
-    host.visibility = View.INVISIBLE
+    host.alpha = 0f
     try {
       val save = canvas.save()
       canvas.scale(1f / backdropScale, 1f / backdropScale)
@@ -331,7 +334,7 @@ class GlassView(context: Context) : View(context), GlassSurface {
       root.draw(canvas)
       canvas.restoreToCount(save)
     } finally {
-      host.visibility = previous
+      host.alpha = previous
       capturing = false
     }
 

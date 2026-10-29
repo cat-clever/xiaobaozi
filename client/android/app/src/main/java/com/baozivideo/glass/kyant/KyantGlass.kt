@@ -129,11 +129,15 @@ class BackdropCapture(
         val dx = (loc[0] - rootLoc[0]).toFloat()
         val dy = (loc[1] - rootLoc[1]).toFloat()
 
-        val previous = hide.visibility
+        // ★★ 用 alpha = 0f 临时隐身，绝不能用 visibility = View.INVISIBLE：
+        //   Android 的 View.setFlags 在视图变成 INVISIBLE 时，只要 hasFocus() 为 true
+        //   就会立刻调用 clearFocus()，把 Tab 栏里正在聚焦的按钮焦点强行清掉并跳回顶部。
+        val previous = hide.alpha
         val others = hiddenSiblings(hide)
+        val otherAlphas = FloatArray(others.size) { others[it].alpha }
         capturing = true
-        hide.visibility = View.INVISIBLE
-        others.forEach { it.visibility = View.INVISIBLE }
+        hide.alpha = 0f
+        for (i in others.indices) others[i].alpha = 0f
         try {
             val save = c.save()
             c.scale(1f / scale, 1f / scale)
@@ -142,8 +146,8 @@ class BackdropCapture(
             root.draw(c)
             c.restoreToCount(save)
         } finally {
-            others.forEach { it.visibility = View.VISIBLE }
-            hide.visibility = previous
+            for (i in others.indices) others[i].alpha = otherAlphas[i]
+            hide.alpha = previous
             capturing = false
         }
     }
