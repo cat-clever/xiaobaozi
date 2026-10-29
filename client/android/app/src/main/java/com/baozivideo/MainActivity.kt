@@ -61,6 +61,9 @@ class MainActivity : ReactActivity() {
       val decor = window.decorView
       applyDpadFocus(decor)
       val beforeFocus = decor.findFocus()
+      // ★ 先记下「按键前列表还能不能往下滚」：FlatList 的下一排可能还没渲染，
+      //   这时 ScrollView 只滚动、焦点不动 —— 不能误判成"到底了"跳去 Tab。
+      val couldScrollDown = verticalScrollParent(beforeFocus)?.canScrollVertically(1) ?: false
       val handled = super.dispatchKeyEvent(event)
       // ★★ 底部 Tab 栏是 position: absolute 浮在 ScrollView 上方的：
       //   1. 列表滚到底部时，ScrollView 会先吞下键去滚 paddingBottom，或者卡片底边
@@ -68,7 +71,7 @@ class MainActivity : ReactActivity() {
       //      Tab 栏不在卡片正下方而拒绝转移焦点；
       //   2. 当按「下键」后焦点仍停在原地（说明当前列表下方已无卡片可跳）时，
       //      直接把焦点交给当前选中的底部 Tab。
-      if (event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN && !isTabView(beforeFocus)) {
+      if (event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN && !isTabView(beforeFocus) && !couldScrollDown) {
         val afterFocus = decor.findFocus()
         if (afterFocus == null || afterFocus === beforeFocus) {
           val activeTab = decor.findViewWithTag<View>("tab-active")
@@ -124,6 +127,16 @@ class MainActivity : ReactActivity() {
       applyDpadFocus(decor)
       if (decor.findFocus() == null) requestInitialFocus(decor)
     }
+  }
+
+  /** 找最近一个能纵向滚动的祖先（FlatList / ScrollView） */
+  private fun verticalScrollParent(view: View?): View? {
+    var node = view?.parent as? View
+    while (node != null) {
+      if (node.canScrollVertically(1) || node.canScrollVertically(-1)) return node
+      node = node.parent as? View
+    }
+    return null
   }
 
   private fun isTabView(view: View?): Boolean {
