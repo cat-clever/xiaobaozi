@@ -61,17 +61,16 @@ class MainActivity : ReactActivity() {
       val decor = window.decorView
       applyDpadFocus(decor)
       val beforeFocus = decor.findFocus()
-      // ★ 先记下「按键前列表还能不能往下滚」：FlatList 的下一排可能还没渲染，
-      //   这时 ScrollView 只滚动、焦点不动 —— 不能误判成"到底了"跳去 Tab。
-      val couldScrollDown = verticalScrollParent(beforeFocus)?.canScrollVertically(1) ?: false
       val handled = super.dispatchKeyEvent(event)
       // ★★ 底部 Tab 栏是 position: absolute 浮在 ScrollView 上方的：
       //   1. 列表滚到底部时，ScrollView 会先吞下键去滚 paddingBottom，或者卡片底边
       //      （贴屏幕底）低于悬浮 Tab 栏底边（离底 24dp），导致 FocusFinder 判定
       //      Tab 栏不在卡片正下方而拒绝转移焦点；
-      //   2. 当按「下键」后焦点仍停在原地（说明当前列表下方已无卡片可跳）时，
-      //      直接把焦点交给当前选中的底部 Tab。
-      if (event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN && !isTabView(beforeFocus) && !couldScrollDown) {
+      //   2. 必须在 super.dispatchKeyEvent 之后检查 canScrollDown：在最后一排卡片按
+      //      下键时，按键前还有 102dp 的 paddingBottom 没滚完（canScrollVertically(1)
+      //      为 true），super.dispatchKeyEvent 会一次性把这段空白滚到底（此时
+      //      canScrollDown 变为 false），紧接着把焦点交给底部 Tab，无需按两下。
+      if (event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN && !isTabView(beforeFocus) && !canScrollDown(beforeFocus)) {
         val afterFocus = decor.findFocus()
         if (afterFocus == null || afterFocus === beforeFocus) {
           val activeTab = decor.findViewWithTag<View>("tab-active")
@@ -129,14 +128,14 @@ class MainActivity : ReactActivity() {
     }
   }
 
-  /** 找最近一个能纵向滚动的祖先（FlatList / ScrollView） */
-  private fun verticalScrollParent(view: View?): View? {
+  /** 检查祖先滚动容器（FlatList / ScrollView）是否还能继续向下滚动 */
+  private fun canScrollDown(view: View?): Boolean {
     var node = view?.parent as? View
     while (node != null) {
-      if (node.canScrollVertically(1) || node.canScrollVertically(-1)) return node
+      if (node.canScrollVertically(1)) return true
       node = node.parent as? View
     }
-    return null
+    return false
   }
 
   private fun isTabView(view: View?): Boolean {
